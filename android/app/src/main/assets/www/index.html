@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#f3eee2" />
+    <meta name="description" content="迹忆：记录徒步轨迹、在地点留下照片与心情，结束后生成一支属于你的运动 Vlog。" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="迹忆" />
+    <title>迹忆 · 把走过的路，剪成一段回忆</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="assets/icons/logo.svg" />
+    <link rel="apple-touch-icon" href="assets/icons/icon-192.png" />
+    <link rel="stylesheet" href="assets/css/app.css" />
+    <link rel="stylesheet" href="assets/css/pages.css" />
+  </head>
+  <body>
+    <div class="app-shell" id="app">
+      <div id="view" class="view">
+        <div class="boot-splash">
+          <span class="boot-splash__mark">迹</span>
+          <p>正在打开你的足迹…</p>
+        </div>
+      </div>
+      <div id="toast-root" aria-live="polite"></div>
+      <div id="sheet-root"></div>
+    </div>
+    <script>
+      (function () {
+        function bootError(message) {
+          var view = document.getElementById('view');
+          if (!view || view.querySelector('.screen')) return;
+          view.innerHTML = '<div class="boot-splash boot-splash--error"><span class="boot-splash__mark">!</span><p>' +
+            String(message || '页面加载失败').replace(/[<>&]/g, '') +
+            '</p><small>请刷新重试，或使用 Chrome / Edge 打开。</small></div>';
+        }
+        window.addEventListener('error', function (event) {
+          if (event.message) bootError(event.message);
+        });
+        window.addEventListener('unhandledrejection', function (event) {
+          bootError(event.reason && event.reason.message ? event.reason.message : event.reason);
+        });
+        setTimeout(function () {
+          var view = document.getElementById('view');
+          if (view && !view.querySelector('.screen') && view.querySelector('.boot-splash:not(.boot-splash--error)')) {
+            bootError('加载时间比预期更久，请刷新页面');
+          }
+        }, 9000);
+      })();
+    </script>
+    <noscript>迹忆需要启用 JavaScript 才能记录轨迹与生成视频。</noscript>
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>

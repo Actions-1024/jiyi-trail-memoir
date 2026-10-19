@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body { margin: 0; background: #0b1713; }
+    iframe { display: block; width: 390px; height: 844px; margin: 20px; border: 0; background: #f3eee2; }
+  </style>
+</head>
+<body>
+  <iframe id="frame" allow="geolocation; camera; microphone"></iframe>
+  <pre id="result" style="position:fixed;left:0;bottom:0;max-width:100%;margin:0;background:#fff;color:#000;font:10px monospace;white-space:pre-wrap;z-index:9999"></pre>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const frame = document.getElementById('frame');
+    const result = document.getElementById('result');
+    const path = params.get('path') || '/';
+    window.addEventListener('error', (event) => { result.textContent += 'PARENT ERR ' + event.message + '\n'; });
+    frame.src = path;
+    frame.onload = () => {
+      frame.contentWindow.addEventListener('error', (event) => {
+        result.textContent += 'IFRAME ERR ' + event.message + '\n';
+      });
+      frame.contentWindow.addEventListener('unhandledrejection', (event) => {
+        result.textContent += 'IFRAME REJECT ' + (event.reason?.message || event.reason) + '\n';
+      });
+      const wait = Number(params.get('wait') || 4000);
+      setTimeout(async () => {
+        try {
+          const code = params.get('eval');
+          if (code) {
+            const value = await frame.contentWindow.eval(code);
+            result.textContent += 'EVAL ' + JSON.stringify(value) + '\n';
+            document.title = 'EVAL:' + JSON.stringify(value);
+          }
+          const scroll = Number(params.get('scroll') || 0);
+          if (scroll) frame.contentWindow.scrollTo(0, scroll);
+          const selector = params.get('click');
+          if (selector) frame.contentDocument.querySelector(selector)?.click();
+        } catch (error) {
+          result.textContent += 'ERR ' + error.message + '\n';
+          document.title = 'ERR:' + error.message;
+        }
+      }, wait);
+    };
+  </script>
+</body>
+</html>

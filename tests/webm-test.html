@@ -1,0 +1,59 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>WebM duration test</title></head>
+<body style="background:#f3eee2;font:14px sans-serif;padding:20px">
+<h1>WebM duration test</h1>
+<pre id="out">starting…</pre>
+<video id="video" controls style="width:240px;margin-top:20px"></video>
+<script type="module">
+import { fixWebmDuration } from '/js/webm.js';
+
+const out = document.getElementById('out');
+const video = document.getElementById('video');
+
+window.runTest = () => new Promise(async (resolve, reject) => {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 568;
+    const ctx = canvas.getContext('2d');
+    let frame = 0;
+    const timer = setInterval(() => {
+      frame++;
+      ctx.fillStyle = `hsl(${frame * 8}, 40%, 45%)`;
+      ctx.fillRect(0, 0, 320, 568);
+      ctx.fillStyle = '#fff';
+      ctx.font = '30px sans-serif';
+      ctx.fillText(String(frame), 24, 60);
+    }, 50);
+    const stream = canvas.captureStream(30);
+    const mime = ['video/webm;codecs=vp8', 'video/webm'].find((t) => MediaRecorder.isTypeSupported(t));
+    const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 1_000_000 });
+    const chunks = [];
+    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    recorder.onstop = async () => {
+      clearInterval(timer);
+      stream.getTracks().forEach((t) => t.stop());
+      const raw = new Blob(chunks, { type: 'video/webm' });
+      const fixed = await fixWebmDuration(raw, 3.2);
+      const rawUrl = URL.createObjectURL(raw);
+      const fixedUrl = URL.createObjectURL(fixed);
+      const probe = document.createElement('video');
+      probe.preload = 'metadata';
+      probe.src = rawUrl;
+      await new Promise((r) => { probe.onloadedmetadata = r; probe.onerror = r; setTimeout(r, 2500); });
+      const rawDuration = probe.duration;
+      video.src = fixedUrl;
+      await new Promise((r) => { video.onloadedmetadata = r; video.onerror = r; setTimeout(r, 2500); });
+      const result = { rawSize: raw.size, fixedSize: fixed.size, rawDuration, fixedDuration: video.duration, seekable: video.seekable.length ? video.seekable.end(0) : null };
+      out.textContent = JSON.stringify(result, null, 2);
+      resolve(result);
+    };
+    recorder.start(500);
+    setTimeout(() => recorder.stop(), 3200);
+  } catch (error) {
+    out.textContent = String(error.stack || error);
+    reject(error);
+  }
+});
+</script>
+</body></html>

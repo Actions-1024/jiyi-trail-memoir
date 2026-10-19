@@ -1,0 +1,12 @@
+# Normalize text files to LF in the repository; keep media/binaries untouched.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.zip binary
+*.webm binary
+*.mp4 binary
+*.keystore binary
+*.jks binary

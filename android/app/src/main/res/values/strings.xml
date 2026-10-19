@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">迹忆</string>
+    <string name="splash_title">迹忆</string>
+    <string name="splash_subtitle">TRAIL MEMOIR</string>
+    <string name="splash_loading">正在打开你的足迹…</string>
+</resources>

@@ -1,0 +1,17 @@
+node_modules/
+.chrome*/
+.chrome-profile*/
+.chrome-cdp*/
+shots/
+*.log
+.DS_Store
+Thumbs.db
+
+# Android build outputs
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/app/release/
+
