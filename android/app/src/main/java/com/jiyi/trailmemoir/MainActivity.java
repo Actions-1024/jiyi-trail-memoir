@@ -423,6 +423,7 @@ public class MainActivity extends Activity {
                 nativeLocationError = "手机定位服务不可用";
                 return;
             }
+            nativeLastLocation = null;
             nativeLocationError = null;
             nativeLocationListener = new LocationListener() {
                 @Override
