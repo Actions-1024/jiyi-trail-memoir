@@ -28,6 +28,17 @@ export class TrackRecorder {
     this.wakeLock = null;
     this.firstFixAt = null;
     this._tick = null;
+    this._nativeTimer = null;
+    this._nativeTimeout = null;
+    this._nativeLastTime = 0;
+    this._nativeLastError = '';
+  }
+
+  _hasNativeLocation() {
+    return typeof window !== 'undefined'
+      && !!window.JiyiAndroid
+      && typeof window.JiyiAndroid.startLocationUpdates === 'function'
+      && typeof window.JiyiAndroid.getLocationJson === 'function';
   }
 
   get isRecording() {
@@ -45,10 +56,10 @@ export class TrackRecorder {
   }
 
   async start() {
-    if (!('geolocation' in navigator)) {
-      throw new Error('当前浏览器不支持定位，请换用手机浏览器打开');
+    if (!this._hasNativeLocation() && !('geolocation' in navigator)) {
+      throw new Error('当前设备不支持定位，请检查系统权限');
     }
-    if (this.watchId != null) {
+    if (this.watchId != null && navigator.geolocation) {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
@@ -57,7 +68,8 @@ export class TrackRecorder {
     this.onStatus('locating');
     this.firstFixAt = null;
     await this._requestWakeLock();
-    this._watch();
+    if (this._hasNativeLocation()) this._startNativeWatch();
+    else this._watch();
     return this;
   }
 
@@ -79,6 +91,80 @@ export class TrackRecorder {
     );
   }
 
+  _startNativeWatch() {
+    this._stopNativeWatch();
+    try {
+      window.JiyiAndroid.startLocationUpdates();
+    } catch (error) {
+      this._watch();
+      return;
+    }
+    this._nativeLastTime = 0;
+    this._nativeLastError = '';
+    this._nativeTimer = setInterval(() => this._pollNativeLocation(), 900);
+    this._nativeTimeout = setTimeout(() => {
+      if (this.state === 'locating' && this.points.length === 0) {
+        this.onError(new Error('定位超时，请到开阔处或检查系统 GPS / 网络定位'));
+        this.onStatus('error');
+      }
+    }, 25_000);
+    setTimeout(() => this._pollNativeLocation(), 250);
+  }
+
+  _pollNativeLocation() {
+    if (!this._hasNativeLocation()) return;
+    if (this.state === 'paused' || this.state === 'stopped' || this.state === 'idle') return;
+    try {
+      const error = window.JiyiAndroid.getLocationError?.() || '';
+      if (error) {
+        if (error !== this._nativeLastError) {
+          this._nativeLastError = error;
+          this.onError(new Error(error));
+          this.onStatus('error');
+        }
+        return;
+      }
+      this._nativeLastError = '';
+      const json = window.JiyiAndroid.getLocationJson?.() || '';
+      if (!json) return;
+      const fix = JSON.parse(json);
+      if (!Number.isFinite(fix.lat) || !Number.isFinite(fix.lng)) return;
+      const fixTime = Number(fix.time) || 0;
+      if (fixTime && fixTime === this._nativeLastTime) return;
+      this._nativeLastTime = fixTime;
+      this._handlePosition({
+        coords: {
+          latitude: fix.lat,
+          longitude: fix.lng,
+          altitude: Number.isFinite(fix.alt) ? fix.alt : null,
+          accuracy: Number.isFinite(fix.accuracy) ? fix.accuracy : null,
+          speed: Number.isFinite(fix.speed) ? fix.speed : null,
+          heading: Number.isFinite(fix.heading) ? fix.heading : null,
+        },
+        timestamp: fixTime || Date.now(),
+      });
+    } catch (error) {
+      // A malformed bridge response should not kill the polling loop.
+    }
+  }
+
+  _stopNativeWatch() {
+    if (this._nativeTimer) {
+      clearInterval(this._nativeTimer);
+      this._nativeTimer = null;
+    }
+    clearTimeout(this._nativeTimeout);
+    this._nativeTimeout = null;
+    if (this._hasNativeLocation()) {
+      try { window.JiyiAndroid.stopLocationUpdates?.(); } catch { /* optional */ }
+    }
+  }
+
+  _clearNativeTimeout() {
+    clearTimeout(this._nativeTimeout);
+    this._nativeTimeout = null;
+  }
+
   _handlePosition(position) {
     if (this.state === 'paused' || this.state === 'idle' || this.state === 'stopped') return;
     const { latitude, longitude, altitude, accuracy, speed, heading } = position.coords;
@@ -98,6 +184,7 @@ export class TrackRecorder {
     if (this.state === 'locating') {
       this.state = 'recording';
       this.firstFixAt = now;
+      this._clearNativeTimeout();
       this.onStatus('recording');
     }
     if (!this.lastPoint) {
@@ -133,10 +220,11 @@ export class TrackRecorder {
     if (this.state !== 'recording') return;
     this.pausedAt = Date.now();
     this.state = 'paused';
-    if (this.watchId != null) {
+    if (this.watchId != null && navigator.geolocation) {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
+    this._stopNativeWatch();
     this._releaseWakeLock();
     this.onStatus('paused');
     this._saveDraft();
@@ -150,16 +238,18 @@ export class TrackRecorder {
     this.lastPoint = this.points[this.points.length - 1] || null;
     this.onStatus('recording');
     this._requestWakeLock();
-    this._watch();
+    if (this._hasNativeLocation()) this._startNativeWatch();
+    else this._watch();
     this._saveDraft();
   }
 
   stop() {
     this.state = 'stopped';
-    if (this.watchId != null) {
+    if (this.watchId != null && navigator.geolocation) {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
+    this._stopNativeWatch();
     this._releaseWakeLock();
     clearTimeout(this._tick);
     this.onStatus('stopped');
@@ -168,10 +258,11 @@ export class TrackRecorder {
 
   abandon() {
     this.state = 'stopped';
-    if (this.watchId != null) {
+    if (this.watchId != null && navigator.geolocation) {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
+    this._stopNativeWatch();
     this._releaseWakeLock();
     clearTimeout(this._tick);
     if (this.startedAt && this.points.length > 0) this._saveDraft();

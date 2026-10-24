@@ -112,9 +112,20 @@ android/
       └─ assets/www/              # 当前 Web 应用副本
 ```
 
+## 定位双通道
+
+有些国产 ROM 的 WebView 没有可用的定位 Provider，会出现“WebView 有定位 API，但一直超时”的情况。因此原生壳加了 **LocationManager 后备通道**：
+
+- WebView geolocation 仍保留；
+- 页面调用 `JiyiAndroid.startLocationUpdates()` 时，原生同时监听 `GPS_PROVIDER` 和 `NETWORK_PROVIDER`；
+- Web 端每 900ms 读取 `getLocationJson()`，把经纬度、精度、海拔、速度、方向交给轨迹记录器；
+- 原生权限被拒绝、GPS 关闭或没有 Provider 时，`getLocationError()` 会返回明确原因。
+
+所以现在即使 WebView 的定位实现失效，原生壳也会优先使用系统定位。
+
 ## 已知边界
 
-- **没有后台定位**：App 退到后台后，Android 可能暂停 WebView 的 GPS 更新。徒步时请保持 App 在前台；如果需要锁屏记录，需增加前台服务 + 原生 LocationManager。
+- **没有后台定位**：App 退到后台后，系统可能暂停位置更新。徒步时请保持 App 在前台；如果需要锁屏记录，还需增加前台服务。
 - **视频编码依赖 WebView**：现代 Android WebView（Chromium）支持 `canvas.captureStream` 和 `MediaRecorder`。极旧或定制 WebView 可能不支持，界面会显示“不支持视频导出”。
 - **WebM 相册兼容性**：部分相册不索引 WebM。文件会保存到 `Movies/迹忆`，可在“文件”中找到，也可直接用分享面板发送。
 - **地图瓦片**：在线标准地图需要网络；无网络时自动使用手绘轨迹示意图。
@@ -133,6 +144,11 @@ shareLast()                   -> 打开系统分享面板
 toast(message)
 setKeepScreenOn(boolean)
 isNativeApp()                 -> true
+
+startLocationUpdates()
+stopLocationUpdates()
+getLocationJson()             -> JSON 或 ""
+getLocationError()            -> 错误文本或 ""
 ```
 
 视频会按 96KB 分块进行 Base64 传输，避免一次性把十几 MB 的 Blob 塞进 JS Bridge。

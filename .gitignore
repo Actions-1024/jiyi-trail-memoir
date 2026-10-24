@@ -15,3 +15,8 @@ android/local.properties
 android/.idea/
 android/app/release/
 
+# Downloaded CI artifacts
+jiyi-android-apks/
+jiyi-android-apks.zip
+
+

@@ -5,9 +5,13 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -36,6 +40,8 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
+
+import org.json.JSONObject;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
@@ -68,6 +74,7 @@ public class MainActivity extends Activity {
     private static final int REQ_CAMERA_IMAGE = 4102;
     private static final int REQ_CAMERA_VIDEO = 4103;
     private static final int REQ_LOCATION = 4201;
+    private static final int REQ_NATIVE_LOCATION = 4202;
 
     private WebView webView;
     private View splash;
@@ -80,6 +87,13 @@ public class MainActivity extends Activity {
     private GeolocationPermissions.Callback pendingGeoCallback;
     private String pendingGeoOrigin;
     private boolean geoRequested = false;
+
+    private LocationManager nativeLocationManager;
+    private LocationListener nativeLocationListener;
+    private volatile Location nativeLastLocation;
+    private volatile String nativeLocationError;
+    private boolean nativeLocationStarted = false;
+    private boolean nativeLocationPermissionPending = false;
 
     private NativeBridge nativeBridge;
 
@@ -388,6 +402,137 @@ public class MainActivity extends Activity {
         finishFileChooser(results);
     }
 
+    private void startNativeLocation() {
+        if (!hasLocationPermission()) {
+            if (!nativeLocationPermissionPending) {
+                nativeLocationPermissionPending = true;
+                requestPermissions(
+                        new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION},
+                        REQ_NATIVE_LOCATION);
+            }
+            return;
+        }
+        startNativeLocationInternal();
+    }
+
+    private void startNativeLocationInternal() {
+        if (nativeLocationStarted) return;
+        try {
+            nativeLocationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+            if (nativeLocationManager == null) {
+                nativeLocationError = "手机定位服务不可用";
+                return;
+            }
+            nativeLocationError = null;
+            nativeLocationListener = new LocationListener() {
+                @Override
+                public void onLocationChanged(Location location) {
+                    if (location == null) return;
+                    nativeLastLocation = new Location(location);
+                    nativeLocationError = null;
+                }
+
+                @Override
+                public void onProviderEnabled(String provider) {
+                    nativeLocationError = null;
+                }
+
+                @Override
+                public void onProviderDisabled(String provider) {
+                    if (nativeLocationManager == null || !isAnyLocationProviderEnabled()) {
+                        nativeLocationError = "手机定位服务已关闭，请打开 GPS 后重试";
+                    }
+                }
+
+                @Override
+                public void onStatusChanged(String provider, int status, Bundle extras) {
+                    // Deprecated on modern Android; kept for compatibility.
+                }
+            };
+
+            boolean requested = false;
+            boolean securityDenied = false;
+            String[] providers = new String[]{
+                    LocationManager.GPS_PROVIDER,
+                    LocationManager.NETWORK_PROVIDER
+            };
+            for (String provider : providers) {
+                try {
+                    if (!nativeLocationManager.isProviderEnabled(provider)) continue;
+                    nativeLocationManager.requestLocationUpdates(
+                            provider, 1000L, 2f, nativeLocationListener, Looper.getMainLooper());
+                    requested = true;
+                    Location known = nativeLocationManager.getLastKnownLocation(provider);
+                    if (known != null && System.currentTimeMillis() - known.getTime() < 15 * 60 * 1000L
+                            && (nativeLastLocation == null || known.getTime() > nativeLastLocation.getTime())) {
+                        nativeLastLocation = new Location(known);
+                    }
+                } catch (SecurityException permissionError) {
+                    securityDenied = true;
+                } catch (Exception providerError) {
+                    // Try the next provider.
+                }
+            }
+            if (!requested) {
+                nativeLocationStarted = false;
+                nativeLocationError = securityDenied
+                        ? "缺少位置权限，请允许迹忆使用位置"
+                        : "手机定位服务未开启，请打开 GPS 或网络定位";
+                return;
+            }
+            nativeLocationError = null;
+            nativeLocationStarted = true;
+        } catch (Exception error) {
+            nativeLocationStarted = false;
+            nativeLocationError = "定位初始化失败，请重试";
+        }
+    }
+
+    private void stopNativeLocation() {
+        nativeLocationStarted = false;
+        if (nativeLocationManager != null && nativeLocationListener != null) {
+            try {
+                nativeLocationManager.removeUpdates(nativeLocationListener);
+            } catch (Exception ignored) {
+                // Updates already gone.
+            }
+        }
+        nativeLocationListener = null;
+    }
+
+    private boolean isAnyLocationProviderEnabled() {
+        if (nativeLocationManager == null) return false;
+        try {
+            return nativeLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+                    || nativeLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String getNativeLocationJson() {
+        Location location = nativeLastLocation;
+        if (location == null) return "";
+        try {
+            JSONObject json = new JSONObject();
+            json.put("lat", location.getLatitude());
+            json.put("lng", location.getLongitude());
+            json.put("time", location.getTime());
+            if (location.hasAltitude()) json.put("alt", location.getAltitude());
+            if (location.hasAccuracy()) json.put("accuracy", location.getAccuracy());
+            if (location.hasSpeed()) json.put("speed", location.getSpeed());
+            if (location.hasBearing()) json.put("heading", location.getBearing());
+            return json.toString();
+        } catch (Exception error) {
+            return "";
+        }
+    }
+
+    private String getNativeLocationError() {
+        String error = nativeLocationError;
+        return error == null ? "" : error;
+    }
+
     private boolean hasLocationPermission() {
         return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
                 || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
@@ -396,6 +541,23 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_NATIVE_LOCATION) {
+            nativeLocationPermissionPending = false;
+            boolean nativeGranted = false;
+            for (int result : grantResults) {
+                if (result == PackageManager.PERMISSION_GRANTED) {
+                    nativeGranted = true;
+                    break;
+                }
+            }
+            if (nativeGranted) {
+                startNativeLocationInternal();
+            } else {
+                nativeLocationError = "需要位置权限才能记录轨迹，请在系统设置中允许";
+                Toast.makeText(this, "需要位置权限才能记录轨迹", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
         if (requestCode != REQ_LOCATION) return;
         boolean granted = false;
         for (int result : grantResults) {
@@ -437,6 +599,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        stopNativeLocation();
         if (filePathCallback != null) {
             filePathCallback.onReceiveValue(null);
             filePathCallback = null;
@@ -588,6 +751,26 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public boolean isNativeApp() {
             return true;
+        }
+
+        @JavascriptInterface
+        public void startLocationUpdates() {
+            runOnUiThread(MainActivity.this::startNativeLocation);
+        }
+
+        @JavascriptInterface
+        public void stopLocationUpdates() {
+            runOnUiThread(MainActivity.this::stopNativeLocation);
+        }
+
+        @JavascriptInterface
+        public String getLocationJson() {
+            return getNativeLocationJson();
+        }
+
+        @JavascriptInterface
+        public String getLocationError() {
+            return getNativeLocationError();
         }
 
         void closePending() {
