@@ -661,6 +661,7 @@ public class MainActivity extends Activity {
 
         private boolean shareAfterSave = false;
         private boolean transcodeInProgress = false;
+        private boolean transcodeShareAfter = false;
         private Transformer transformer;
         private File transcodeInput;
         private File transcodeOutput;
