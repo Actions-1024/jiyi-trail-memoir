@@ -696,6 +696,7 @@ public class MainActivity extends Activity {
 
         private File frameFile;
         private BufferedOutputStream frameOut;
+        private final List<byte[]> extractedFrames = new ArrayList<>();
 
         @JavascriptInterface
         public boolean beginSave(String filename, String mimeType) {
@@ -858,7 +859,25 @@ public class MainActivity extends Activity {
             }
         }
 
+        @JavascriptInterface
+        public String getExtractedFrame(int index) {
+            synchronized (extractedFrames) {
+                if (index < 0 || index >= extractedFrames.size()) return "";
+                return Base64.encodeToString(extractedFrames.get(index), Base64.NO_WRAP);
+            }
+        }
+
+        @JavascriptInterface
+        public void clearExtractedFrames() {
+            synchronized (extractedFrames) {
+                extractedFrames.clear();
+            }
+        }
+
         private String extractVideoFrames(File source) {
+            synchronized (extractedFrames) {
+                extractedFrames.clear();
+            }
             MediaMetadataRetriever retriever = new MediaMetadataRetriever();
             try {
                 retriever.setDataSource(source.getAbsolutePath());
@@ -877,7 +896,7 @@ public class MainActivity extends Activity {
                 // keeps both the bridge payload and decoded memory small.
                 long clipMs = Math.min(durationMs, 3000L);
                 int count = (int) Math.min(24, Math.max(8, Math.round(clipMs / 1000.0 * 8)));
-                JSONArray frames = new JSONArray();
+                int stored = 0;
                 for (int i = 0; i < count; i++) {
                     long timeUs = (long) (clipMs * 1000.0 * i / Math.max(1, count - 1));
                     Bitmap bitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST);
@@ -885,12 +904,21 @@ public class MainActivity extends Activity {
                     Bitmap output = scaleAndRotate(bitmap, 480, rotation);
                     if (output != bitmap) bitmap.recycle();
                     ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
-                    output.compress(Bitmap.CompressFormat.JPEG, 72, jpeg);
+                    output.compress(Bitmap.CompressFormat.JPEG, 68, jpeg);
                     output.recycle();
-                    frames.put("data:image/jpeg;base64," + Base64.encodeToString(jpeg.toByteArray(), Base64.NO_WRAP));
+                    synchronized (extractedFrames) {
+                        extractedFrames.add(jpeg.toByteArray());
+                    }
+                    stored++;
+                }
+                if (stored == 0) {
+                    toastOnUi("视频帧提取失败，将使用封面");
                 }
                 JSONObject result = new JSONObject();
-                result.put("frames", frames);
+                // Return only metadata here. Each JPEG is fetched through
+                // getExtractedFrame() so a large data-URL array never hits the
+                // WebView bridge/Binder transaction limit.
+                result.put("count", stored);
                 result.put("durationMs", durationMs);
                 result.put("rotation", rotation);
                 return result.toString();
@@ -916,6 +944,9 @@ public class MainActivity extends Activity {
         }
 
         private void closeFrameExtraction() {
+            synchronized (extractedFrames) {
+                extractedFrames.clear();
+            }
             if (frameOut != null) {
                 try { frameOut.close(); } catch (Exception ignored) { }
                 frameOut = null;

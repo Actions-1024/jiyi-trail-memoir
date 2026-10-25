@@ -149,6 +149,47 @@ export async function prepareVideo(file) {
   }
 }
 
+async function extractBrowserFrames(blob, durationHint = 0) {
+  if (typeof window === 'undefined' || !window.JiyiAndroid) return [];
+  const url = URL.createObjectURL(blob);
+  const video = document.createElement('video');
+  video.src = url;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  try {
+    await waitForEvent(video, 'loadedmetadata', 10000);
+    const duration = Number.isFinite(video.duration) && video.duration > 0
+      ? video.duration : Number(durationHint) || 0;
+    if (!duration) return [];
+    const clip = Math.min(duration, 3);
+    const count = Math.min(24, Math.max(8, Math.round(clip * 8)));
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const time = Math.min(Math.max(0.02, clip * i / Math.max(1, count - 1)), Math.max(0.02, duration - 0.05));
+      video.currentTime = time;
+      // Some WebViews don't emit seeked for every tiny seek; the timeout keeps
+      // the fallback bounded and simply skips that frame.
+      await waitForEvent(video, 'seeked', 900).catch(() => {});
+      if (video.readyState < 2) continue;
+      const canvas = document.createElement('canvas');
+      const width = Math.min(480, video.videoWidth || 480);
+      const scale = width / Math.max(1, video.videoWidth || width);
+      canvas.width = width;
+      canvas.height = Math.max(1, Math.round((video.videoHeight || 480) * scale));
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      frames.push(canvas.toDataURL('image/jpeg', 0.68));
+    }
+    return frames;
+  } catch {
+    return [];
+  } finally {
+    URL.revokeObjectURL(url);
+    video.removeAttribute('src');
+    video.load?.();
+  }
+}
+
 export async function processMediaFile(file, tripId) {
   if (!file) throw new Error('没有选择文件');
   if (file.size > 280 * 1024 * 1024) throw new Error('文件超过 280MB，请先压缩一下');
@@ -158,7 +199,13 @@ export async function processMediaFile(file, tripId) {
   const id = uid(prepared.type === 'video' ? 'v' : 'p');
   let frames = [];
   if (prepared.type === 'video') {
-    frames = await extractNativeFrames(prepared.blob, prepared.name, prepared.blob.type || file.type);
+    // The same WebView decoder that produced the poster frame is also able to
+    // seek and draw individual frames. Try that first; native extraction is a
+    // fallback for WebViews with unreliable seeking.
+    frames = await extractBrowserFrames(prepared.blob, prepared.duration);
+    if (!frames.length) {
+      frames = await extractNativeFrames(prepared.blob, prepared.name, prepared.blob.type || file.type);
+    }
   }
   await putMedia({
     id,
@@ -232,7 +279,10 @@ export async function hydrateTrip(trip, options = {}) {
       if (media) {
         let frames = media.frames || moment.frames || [];
         if (!frames.length && media.type === 'video' && options.extractFrames && media.blob) {
-          frames = await extractNativeFrames(media.blob, media.name, media.blob.type);
+          frames = await extractBrowserFrames(media.blob, media.duration);
+          if (!frames.length) {
+            frames = await extractNativeFrames(media.blob, media.name, media.blob.type);
+          }
         }
         return {
           ...moment,
@@ -337,7 +387,14 @@ async function extractNativeFrames(blob, filename, mime) {
     const json = bridge.finishFrameExtraction() || '';
     if (!json) return [];
     const parsed = JSON.parse(json);
-    return Array.isArray(parsed.frames) ? parsed.frames : [];
+    const count = Number(parsed.count) || 0;
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const data = bridge.getExtractedFrame?.(i) || '';
+      if (data) frames.push(`data:image/jpeg;base64,${data}`);
+    }
+    bridge.clearExtractedFrames?.();
+    return frames;
   } catch (error) {
     console.warn('Native frame extraction failed', error);
     return [];
