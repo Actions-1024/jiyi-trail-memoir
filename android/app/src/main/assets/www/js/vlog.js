@@ -166,6 +166,8 @@ export class VlogComposer {
     this.images = new Map();
     this.imagePromises = new Map();
     this.videos = new Map();
+    this.frameSets = new Map();
+    this.framePromises = new Map();
     this.videoHost = null;
     this.activeVideoId = null;
     this.time = 0;
@@ -252,6 +254,23 @@ export class VlogComposer {
     return image;
   }
 
+  async _loadFrames(moment) {
+    if (this.frameSets.has(moment.id)) return this.frameSets.get(moment.id);
+    if (!Array.isArray(moment.frames) || !moment.frames.length) return null;
+    if (!this.framePromises.has(moment.id)) {
+      this.framePromises.set(moment.id, Promise.all(moment.frames.map((src) => new Promise((resolve) => {
+        const image = new Image();
+        image.decoding = 'async';
+        image.onload = () => resolve(image);
+        image.onerror = () => resolve(null);
+        image.src = src;
+      }))));
+    }
+    const images = (await this.framePromises.get(moment.id)).filter(Boolean);
+    if (images.length) this.frameSets.set(moment.id, images);
+    return images.length ? images : null;
+  }
+
   _ensureVideoHost() {
     if (this.videoHost) return this.videoHost;
     const host = document.createElement('div');
@@ -276,6 +295,7 @@ export class VlogComposer {
   }
 
   async _loadVideo(moment) {
+    if (this.frameSets.has(moment.id)) return null;
     const src = moment.videoSrc || (moment.type === 'video' ? moment.src : null) || (moment.mediaType === 'video' ? moment.src : null);
     if (!src) return null;
     if (this.videos.has(moment.id)) return this.videos.get(moment.id);
@@ -330,12 +350,26 @@ export class VlogComposer {
       if (moment.thumbUrl) srcs.add(moment.thumbUrl);
     }
     await Promise.all([...srcs].map((src) => this._loadImage(src)));
-    await Promise.all(this.moments.map((moment) => this._loadVideo(moment)));
+    await Promise.all(this.moments.map((moment) => this._loadFrames(moment)));
+    await Promise.all(this.moments
+      .filter((moment) => !this.frameSets.get(moment.id)?.length)
+      .map((moment) => this._loadVideo(moment)));
     this.renderAt(0);
   }
 
   _getImageForMoment(moment) {
     return this.images.get(moment.src) || this.images.get(moment.thumbUrl) || null;
+  }
+
+  _frameSource(moment) {
+    const frames = this.frameSets.get(moment.id);
+    if (!frames?.length) return null;
+    const phase = this.timeline.phases.find((item) => item.kind === 'moment' && item.moment.id === moment.id);
+    const local = phase ? Math.max(0, this.time - phase.start) : 0;
+    const index = Math.min(frames.length - 1, Math.max(0, Math.floor(local * 8)));
+    const image = frames[index];
+    if (!image) return null;
+    return { source: image, w: image.naturalWidth, h: image.naturalHeight };
   }
 
   _backgroundSource(moment) {
@@ -734,7 +768,7 @@ export class VlogComposer {
     ctx.fill();
     ctx.restore();
 
-    const bg = this._backgroundSource(moment);
+    const bg = this._frameSource(moment) || this._backgroundSource(moment);
     ctx.save();
     roundedPath(ctx, x, y, w, h, 28);
     ctx.clip();
@@ -779,7 +813,8 @@ export class VlogComposer {
   }
 
   _drawNoteCard(ctx, moment, index, total) {
-    const hasImage = !!moment.src;
+    const frame = this._frameSource(moment);
+    const hasImage = !!(moment.src || frame);
     const x = 58;
     const y = 164;
     const w = W - 116;
@@ -799,9 +834,11 @@ export class VlogComposer {
     ctx.clip();
     let textTop = y + 128;
     if (hasImage) {
-      const image = this._getImageForMoment(moment);
+      const image = frame?.source || this._getImageForMoment(moment);
       if (image) {
-        coverRect(ctx, image, image.naturalWidth, image.naturalHeight, x, y, w, 264);
+        const iw = frame?.w || image.naturalWidth;
+        const ih = frame?.h || image.naturalHeight;
+        coverRect(ctx, image, iw, ih, x, y, w, 264);
         const shade = ctx.createLinearGradient(0, y + 160, 0, y + 264);
         shade.addColorStop(0, 'rgba(10, 18, 14, 0)');
         shade.addColorStop(1, 'rgba(10, 18, 14, 0.38)');
@@ -1035,6 +1072,8 @@ export class VlogComposer {
     this.map.destroy();
     this.videos.clear();
     this.images.clear();
+    this.frameSets.clear();
+    this.framePromises.clear();
     if (this.videoHost) {
       this.videoHost.replaceChildren();
       this.videoHost.remove();

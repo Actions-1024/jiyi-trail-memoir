@@ -8,10 +8,13 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -48,10 +51,12 @@ import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -637,6 +642,7 @@ public class MainActivity extends Activity {
         }
         if (nativeBridge != null) {
             nativeBridge.cancelTranscode();
+            nativeBridge.closeFrameExtraction();
             nativeBridge.closePending();
         }
         if (webView != null) {
@@ -687,6 +693,9 @@ public class MainActivity extends Activity {
         private Transformer transformer;
         private File transcodeInput;
         private File transcodeOutput;
+
+        private File frameFile;
+        private BufferedOutputStream frameOut;
 
         @JavascriptInterface
         public boolean beginSave(String filename, String mimeType) {
@@ -798,6 +807,122 @@ public class MainActivity extends Activity {
         public void setShareAfterSave(boolean share) {
             synchronized (saveLock) {
                 shareAfterSave = share;
+            }
+        }
+
+        @JavascriptInterface
+        public boolean beginFrameExtraction(String filename, String mimeType) {
+            closeFrameExtraction();
+            try {
+                File dir = new File(getCacheDir(), "frames");
+                if (!dir.exists() && !dir.mkdirs()) return false;
+                String suffix = (mimeType != null && mimeType.contains("webm")) ? ".webm" : ".mp4";
+                frameFile = File.createTempFile("frames_", suffix, dir);
+                frameOut = new BufferedOutputStream(new FileOutputStream(frameFile));
+                return true;
+            } catch (Exception error) {
+                closeFrameExtraction();
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public boolean appendFrameExtraction(String base64Chunk) {
+            if (frameOut == null || base64Chunk == null) return false;
+            try {
+                frameOut.write(Base64.decode(base64Chunk, Base64.DEFAULT));
+                return true;
+            } catch (Exception error) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public String finishFrameExtraction() {
+            if (frameOut == null || frameFile == null) return "";
+            try {
+                frameOut.flush();
+                frameOut.close();
+            } catch (Exception ignored) {
+                // Continue with whatever was written.
+            }
+            frameOut = null;
+            File source = frameFile;
+            frameFile = null;
+            try {
+                return extractVideoFrames(source);
+            } catch (Exception error) {
+                return "";
+            } finally {
+                source.delete();
+            }
+        }
+
+        private String extractVideoFrames(File source) {
+            MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+            try {
+                retriever.setDataSource(source.getAbsolutePath());
+                String durationText = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+                long durationMs = 0;
+                try { durationMs = Long.parseLong(durationText == null ? "0" : durationText); } catch (Exception ignored) {}
+                int rotation = 0;
+                try {
+                    String rotationText = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+                    rotation = Integer.parseInt(rotationText == null ? "0" : rotationText);
+                } catch (Exception ignored) {}
+                if (durationMs <= 0) return "";
+
+                // The Vlog moment is a few seconds. Eight frames per second for
+                // at most three seconds is enough for smooth Canvas playback and
+                // keeps both the bridge payload and decoded memory small.
+                long clipMs = Math.min(durationMs, 3000L);
+                int count = (int) Math.min(24, Math.max(8, Math.round(clipMs / 1000.0 * 8)));
+                JSONArray frames = new JSONArray();
+                for (int i = 0; i < count; i++) {
+                    long timeUs = (long) (clipMs * 1000.0 * i / Math.max(1, count - 1));
+                    Bitmap bitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST);
+                    if (bitmap == null) continue;
+                    Bitmap output = scaleAndRotate(bitmap, 480, rotation);
+                    if (output != bitmap) bitmap.recycle();
+                    ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
+                    output.compress(Bitmap.CompressFormat.JPEG, 72, jpeg);
+                    output.recycle();
+                    frames.put("data:image/jpeg;base64," + Base64.encodeToString(jpeg.toByteArray(), Base64.NO_WRAP));
+                }
+                JSONObject result = new JSONObject();
+                result.put("frames", frames);
+                result.put("durationMs", durationMs);
+                result.put("rotation", rotation);
+                return result.toString();
+            } catch (Exception error) {
+                return "";
+            } finally {
+                try { retriever.release(); } catch (Exception ignored) { }
+            }
+        }
+
+        private Bitmap scaleAndRotate(Bitmap source, int targetWidth, int rotation) {
+            int width = source.getWidth();
+            int height = source.getHeight();
+            float scale = Math.min(1f, targetWidth / (float) Math.max(1, width));
+            Matrix matrix = new Matrix();
+            matrix.postScale(scale, scale);
+            if (rotation != 0) matrix.postRotate(rotation);
+            try {
+                return Bitmap.createBitmap(source, 0, 0, width, height, matrix, true);
+            } catch (Exception error) {
+                return source;
+            }
+        }
+
+        private void closeFrameExtraction() {
+            if (frameOut != null) {
+                try { frameOut.close(); } catch (Exception ignored) { }
+                frameOut = null;
+            }
+            if (frameFile != null) {
+                frameFile.delete();
+                frameFile = null;
             }
         }
 

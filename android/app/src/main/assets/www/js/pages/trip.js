@@ -185,7 +185,7 @@ export async function renderTrip(root, ctx) {
     onMomentTap: (moment) => {
       const isVideo = moment.type === 'video' || moment.mediaType === 'video';
       const src = isVideo ? (moment.videoSrc || moment.src) : moment.src;
-      if (src) openMediaPreview(src, isVideo ? 'video' : 'photo', moment.title || moment.text || '');
+      if (src) openMediaPreview(src, isVideo ? 'video' : 'photo', moment.title || moment.text || '', moment.frames || []);
     },
     follow: false,
   });
@@ -204,6 +204,7 @@ export async function renderTrip(root, ctx) {
         isVideo ? (moment.videoSrc || moment.src) : moment.src,
         isVideo ? 'video' : 'photo',
         moment.title || moment.text || '',
+        moment.frames || [],
       );
     });
   });

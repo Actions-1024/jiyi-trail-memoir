@@ -219,20 +219,44 @@ export function emptyState(iconName, title, copy, action = '') {
   </div>`;
 }
 
-export function openMediaPreview(src, type = 'photo', caption = '') {
+export function openMediaPreview(src, type = 'photo', caption = '', frames = []) {
   const root = document.getElementById('sheet-root');
   if (!root) return;
+  const frameMode = type === 'video' && Array.isArray(frames) && frames.length > 0;
   root.innerHTML = `
     <div class="media-preview" data-preview-close>
       <button class="media-preview__close icon-button" aria-label="关闭" data-preview-close>${icon('close', 20)}</button>
-      ${type === 'video'
-        ? `<video class="media-preview__media" src="${src}" controls autoplay playsinline></video>`
-        : `<img class="media-preview__media" src="${src}" alt="${escapeHTML(caption || '照片')}">`}
+      ${frameMode
+        ? `<div class="media-preview__frames">
+            <img class="media-preview__media" data-preview-frame src="${frames[0]}" alt="${escapeHTML(caption || '视频')}">
+            <button class="media-preview__toggle" type="button" data-frame-toggle>${icon('pause', 12)} 暂停</button>
+          </div>`
+        : type === 'video'
+          ? `<video class="media-preview__media" src="${src}" controls autoplay playsinline></video>`
+          : `<img class="media-preview__media" src="${src}" alt="${escapeHTML(caption || '照片')}">`}
       ${caption ? `<p class="media-preview__caption">${escapeHTML(caption)}</p>` : ''}
     </div>`;
   root.classList.add('is-open', 'is-preview');
   document.body.classList.add('sheet-open');
+  let frameTimer = null;
+  if (frameMode) {
+    let index = 0;
+    let playing = true;
+    const image = root.querySelector('[data-preview-frame]');
+    const toggle = root.querySelector('[data-frame-toggle]');
+    frameTimer = setInterval(() => {
+      if (!playing || !image) return;
+      index = (index + 1) % frames.length;
+      image.src = frames[index];
+    }, 125);
+    toggle?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      playing = !playing;
+      toggle.innerHTML = playing ? `${icon('pause', 12)} 暂停` : `${icon('play', 12)} 播放`;
+    });
+  }
   const close = () => {
+    clearInterval(frameTimer);
     root.classList.remove('is-open', 'is-preview');
     document.body.classList.remove('sheet-open');
     setTimeout(() => {

@@ -156,6 +156,10 @@ export async function processMediaFile(file, tripId) {
     ? await prepareVideo(file)
     : await preparePhoto(file);
   const id = uid(prepared.type === 'video' ? 'v' : 'p');
+  let frames = [];
+  if (prepared.type === 'video') {
+    frames = await extractNativeFrames(prepared.blob, prepared.name, prepared.blob.type || file.type);
+  }
   await putMedia({
     id,
     tripId,
@@ -166,6 +170,7 @@ export async function processMediaFile(file, tripId) {
     height: prepared.height,
     duration: prepared.duration,
     name: prepared.name,
+    frames,
   });
   objectUrls.set(id, {
     src: URL.createObjectURL(prepared.blob),
@@ -177,6 +182,7 @@ export async function processMediaFile(file, tripId) {
     width: prepared.width,
     height: prepared.height,
     duration: prepared.duration,
+    frames,
     src: objectUrls.get(id).src,
     thumbUrl: objectUrls.get(id).thumbUrl,
   };
@@ -194,6 +200,9 @@ export async function resolveMedia(mediaId) {
       width: record?.width,
       height: record?.height,
       duration: record?.duration,
+      frames: record?.frames || [],
+      blob: record?.blob || null,
+      name: record?.name || '',
     };
   }
   const record = await getMedia(mediaId);
@@ -209,15 +218,22 @@ export async function resolveMedia(mediaId) {
     width: record.width,
     height: record.height,
     duration: record.duration,
+    frames: record.frames || [],
+    blob: record.blob,
+    name: record.name || '',
   };
 }
 
-export async function hydrateTrip(trip) {
+export async function hydrateTrip(trip, options = {}) {
   if (!trip) return trip;
   const moments = await Promise.all((trip.moments || []).map(async (moment) => {
     if (moment.mediaId) {
       const media = await resolveMedia(moment.mediaId);
       if (media) {
+        let frames = media.frames || moment.frames || [];
+        if (!frames.length && media.type === 'video' && options.extractFrames && media.blob) {
+          frames = await extractNativeFrames(media.blob, media.name, media.blob.type);
+        }
         return {
           ...moment,
           type: moment.type === 'note' ? 'note' : media.type,
@@ -227,11 +243,13 @@ export async function hydrateTrip(trip) {
           mediaWidth: media.width,
           mediaHeight: media.height,
           mediaDuration: media.duration,
+          frames,
         };
       }
     }
     return {
       ...moment,
+      frames: moment.frames || [],
       thumbUrl: moment.thumbUrl || moment.thumb || moment.src || null,
     };
   }));
@@ -294,6 +312,36 @@ function bytesToBase64(bytes) {
     binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + step));
   }
   return btoa(binary);
+}
+
+// Native frame extraction is the reliable fallback for Android WebView builds
+// that cannot paint a <video> frame into Canvas. It returns an array of JPEG
+// data URLs sampled at 8 fps (max 5 seconds), which the Vlog can draw as a
+// normal image sequence instead of depending on video playback.
+async function extractNativeFrames(blob, filename, mime) {
+  const bridge = window.JiyiAndroid;
+  if (!bridge || typeof bridge.beginFrameExtraction !== 'function') return [];
+  if (blob.size > 80 * 1024 * 1024) return [];
+  try {
+    if (!bridge.beginFrameExtraction(filename || 'moment.mp4', mime || blob.type || 'video/mp4')) {
+      return [];
+    }
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 96 * 1024;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      const chunk = bytes.subarray(offset, Math.min(bytes.length, offset + chunkSize));
+      if (!bridge.appendFrameExtraction(bytesToBase64(chunk))) return [];
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const json = bridge.finishFrameExtraction() || '';
+    if (!json) return [];
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed.frames) ? parsed.frames : [];
+  } catch (error) {
+    console.warn('Native frame extraction failed', error);
+    return [];
+  }
 }
 
 // Saves a large Blob through the Android shell in small Base64 chunks. Sending

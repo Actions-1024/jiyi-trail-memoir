@@ -113,7 +113,7 @@ function resultMarkup(record, url) {
 
 export async function renderExport(root, ctx) {
   const storedTrip = await loadTrip(ctx.params[0]);
-  const trip = storedTrip ? await hydrateTrip(storedTrip) : null;
+  const trip = storedTrip ? await hydrateTrip(storedTrip, { extractFrames: true }) : null;
   if (!trip) {
     root.innerHTML = `<div class="screen"><div class="fatal-error"><span>NOT FOUND</span><h1>这段旅程找不到了</h1><p>它可能已经被删除。</p><a class="button button--primary" href="#/">回到首页</a></div></div>`;
     return { destroy() {} };

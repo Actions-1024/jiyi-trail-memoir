@@ -186,7 +186,7 @@ export async function renderRecord(root, ctx) {
     onMomentTap: (moment) => {
       const isVideo = moment.type === 'video' || moment.mediaType === 'video';
       const src = isVideo ? (moment.videoSrc || moment.src) : moment.src;
-      if (src) openMediaPreview(src, isVideo ? 'video' : 'photo', moment.title || moment.text || '');
+      if (src) openMediaPreview(src, isVideo ? 'video' : 'photo', moment.title || moment.text || '', moment.frames || []);
     },
   });
   map.setRoute(state.points, { progress: 1, moments: state.moments });
@@ -556,6 +556,7 @@ export async function renderRecord(root, ctx) {
         mediaWidth: media.width,
         mediaHeight: media.height,
         mediaDuration: media.duration,
+        frames: media.frames || [],
       });
       close();
     });
@@ -655,6 +656,7 @@ export async function renderRecord(root, ctx) {
             mediaHeight: context.media?.height || null,
             mediaDuration: context.media?.duration || null,
             mediaType: context.media?.type || null,
+            frames: context.media?.frames || [],
           });
           handle?.close();
         });

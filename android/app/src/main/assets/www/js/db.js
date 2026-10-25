@@ -130,7 +130,7 @@ export async function deleteTrip(id) {
   await transactionDone(tx);
 }
 
-export async function putMedia({ id, tripId, blob, thumbBlob, type, width, height, duration, name }) {
+export async function putMedia({ id, tripId, blob, thumbBlob, type, width, height, duration, name, frames }) {
   const record = {
     id,
     tripId,
@@ -141,6 +141,7 @@ export async function putMedia({ id, tripId, blob, thumbBlob, type, width, heigh
     height: height ?? null,
     duration: duration ?? null,
     name: name ?? '',
+    frames: Array.isArray(frames) ? frames : [],
     createdAt: Date.now(),
   };
   const db = await openDB();
