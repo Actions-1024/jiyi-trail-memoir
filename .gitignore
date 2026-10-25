@@ -19,4 +19,8 @@ android/app/release/
 jiyi-android-apks/
 jiyi-android-apks.zip
 
+# Local media the user brings in for debugging
+/*.mp4
+/tests/*.mp4
+
 

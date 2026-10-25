@@ -256,15 +256,18 @@ export class VlogComposer {
     if (this.videoHost) return this.videoHost;
     const host = document.createElement('div');
     host.setAttribute('aria-hidden', 'true');
+    // Keep the decoder surface on screen and above the rendering overlay.
+    // Android WebView can return black frames for elements that are fully
+    // hidden, off-screen or occluded. At 2% opacity it is barely visible to the
+    // user, and MediaRecorder only captures the Vlog canvas anyway.
     Object.assign(host.style, {
       position: 'fixed',
-      left: '0',
-      top: '0',
-      width: '2px',
-      height: '2px',
+      inset: '0',
+      width: '100vw',
+      height: '100vh',
       overflow: 'hidden',
-      opacity: '0.01',
-      zIndex: '-1',
+      opacity: '0.02',
+      zIndex: '2147483000',
       pointerEvents: 'none',
     });
     document.body.appendChild(host);
@@ -280,6 +283,13 @@ export class VlogComposer {
     // Android WebView may not decode a <video> that has never been attached to
     // the document. Keep it technically visible to the decoder but off-screen.
     video.dataset.momentId = moment.id;
+    Object.assign(video.style, {
+      display: 'block',
+      width: '100%',
+      height: '100%',
+      objectFit: 'contain',
+      opacity: '1',
+    });
     this._ensureVideoHost().appendChild(video);
     video.muted = true;
     video.autoplay = true;
@@ -330,7 +340,9 @@ export class VlogComposer {
 
   _backgroundSource(moment) {
     const video = this.videos.get(moment.id);
-    if (video && video.readyState >= 2) return { source: video, w: video.videoWidth, h: video.videoHeight };
+    if (video && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+      return { source: video, w: video.videoWidth, h: video.videoHeight };
+    }
     const image = this._getImageForMoment(moment);
     if (image) return { source: image, w: image.naturalWidth, h: image.naturalHeight };
     return null;
@@ -372,7 +384,8 @@ export class VlogComposer {
         const video = this.videos.get(active.id);
         if (video) {
           try {
-            video.currentTime = 0;
+            // Avoid the first black camera frame; start on a decoded frame.
+            video.currentTime = Math.min(0.2, Math.max(0.01, (video.duration || 1) * 0.04));
             video.play().catch(() => {});
           } catch {
             // Poster still appears.
@@ -381,7 +394,7 @@ export class VlogComposer {
       }
     } else if (active) {
       const video = this.videos.get(active.id);
-      if (video && video.paused && snap.local < 1) video.play().catch(() => {});
+      if (video?.paused) video.play().catch(() => {});
     }
   }
 
