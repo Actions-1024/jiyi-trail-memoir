@@ -54,6 +54,9 @@ function momentCard(moment, index) {
         <div class="moment-photo__body">
           <h3>${escapeHTML(moment.title || '沿途的风景')}</h3>
           ${moment.text ? `<p>${escapeHTML(moment.text)}</p>` : ''}
+          ${moment.src ? `<button class="text-link moment-photo__open" type="button" data-preview="${encodeURIComponent(moment.id)}">
+            ${moment.type === 'video' ? `${icon('play', 12)} 全屏播放视频` : `${icon('image', 12)} 查看原图`}
+          </button>` : ''}
         </div>
       </div>`}
     </div>
@@ -179,6 +182,11 @@ export async function renderTrip(root, ctx) {
     basemap: 'streets',
     chrome: true,
     startEnd: true,
+    onMomentTap: (moment) => {
+      const isVideo = moment.type === 'video' || moment.mediaType === 'video';
+      const src = isVideo ? (moment.videoSrc || moment.src) : moment.src;
+      if (src) openMediaPreview(src, isVideo ? 'video' : 'photo', moment.title || moment.text || '');
+    },
     follow: false,
   });
   map.setRoute(trip.points, { progress: 1, moments: sortedMoments, fit: false });

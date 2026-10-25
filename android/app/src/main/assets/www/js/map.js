@@ -369,6 +369,25 @@ export class TrailMap {
     return { x: (p.x - c.x) * scale + this.width / 2, y: (p.y - c.y) * scale + this.height / 2 };
   }
 
+  _handleMomentTap(event) {
+    if (!this.options.onMomentTap || !this.moments?.length) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    let closest = null;
+    let bestDistance = 26;
+    for (const moment of this.moments) {
+      if (!Number.isFinite(moment.lat) || !Number.isFinite(moment.lng)) continue;
+      const point = this.latLngToScreen(moment.lat, moment.lng);
+      const distance = Math.hypot(point.x - x, point.y - y);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        closest = moment;
+      }
+    }
+    if (closest) this.options.onMomentTap(closest);
+  }
+
   metersPerPixel() {
     return (156543.03392 * Math.cos((this.center.lat * Math.PI) / 180)) / Math.pow(2, this.zoom);
   }
@@ -379,6 +398,7 @@ export class TrailMap {
       canvas.setPointerCapture?.(event.pointerId);
       this._pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (this._pointers.size === 1) {
+        this._tapStart = { x: event.clientX, y: event.clientY, at: performance.now() };
         this._gesture = {
           type: 'pan',
           startX: event.clientX,
@@ -386,6 +406,7 @@ export class TrailMap {
           center: { ...this.center },
         };
       } else if (this._pointers.size === 2) {
+        this._tapStart = null;
         const [a, b] = [...this._pointers.values()];
         this._gesture = {
           type: 'pinch',
@@ -399,6 +420,9 @@ export class TrailMap {
     this._onPointerMove = (event) => {
       if (!this._pointers.has(event.pointerId)) return;
       this._pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (this._tapStart && Math.hypot(event.clientX - this._tapStart.x, event.clientY - this._tapStart.y) > 8) {
+        this._tapStart = null;
+      }
       if (!this._gesture) return;
       if (this._gesture.type === 'pan' && this._pointers.size === 1) {
         const dx = event.clientX - this._gesture.startX;
@@ -421,11 +445,16 @@ export class TrailMap {
       }
     };
     this._onPointerUp = (event) => {
+      const tap = this._tapStart;
+      this._tapStart = null;
       this._pointers.delete(event.pointerId);
       if (this._pointers.size === 0) this._gesture = null;
       else if (this._pointers.size === 1) {
         const [a] = [...this._pointers.values()];
         this._gesture = { type: 'pan', startX: a.x, startY: a.y, center: { ...this.center } };
+      }
+      if (tap && this._pointers.size === 0 && performance.now() - tap.at < 650) {
+        this._handleMomentTap(event);
       }
     };
     this._onWheel = (event) => {

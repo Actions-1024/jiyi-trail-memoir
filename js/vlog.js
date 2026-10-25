@@ -166,6 +166,7 @@ export class VlogComposer {
     this.images = new Map();
     this.imagePromises = new Map();
     this.videos = new Map();
+    this.videoHost = null;
     this.activeVideoId = null;
     this.time = 0;
     this.grain = this._makeGrain();
@@ -251,11 +252,35 @@ export class VlogComposer {
     return image;
   }
 
+  _ensureVideoHost() {
+    if (this.videoHost) return this.videoHost;
+    const host = document.createElement('div');
+    host.setAttribute('aria-hidden', 'true');
+    Object.assign(host.style, {
+      position: 'fixed',
+      left: '0',
+      top: '0',
+      width: '2px',
+      height: '2px',
+      overflow: 'hidden',
+      opacity: '0.01',
+      zIndex: '-1',
+      pointerEvents: 'none',
+    });
+    document.body.appendChild(host);
+    this.videoHost = host;
+    return host;
+  }
+
   async _loadVideo(moment) {
     const src = moment.videoSrc || (moment.type === 'video' ? moment.src : null) || (moment.mediaType === 'video' ? moment.src : null);
     if (!src) return null;
     if (this.videos.has(moment.id)) return this.videos.get(moment.id);
     const video = document.createElement('video');
+    // Android WebView may not decode a <video> that has never been attached to
+    // the document. Keep it technically visible to the decoder but off-screen.
+    video.dataset.momentId = moment.id;
+    this._ensureVideoHost().appendChild(video);
     video.muted = true;
     video.autoplay = true;
     video.playsInline = true;
@@ -309,6 +334,24 @@ export class VlogComposer {
     const image = this._getImageForMoment(moment);
     if (image) return { source: image, w: image.naturalWidth, h: image.naturalHeight };
     return null;
+  }
+
+  primeVideos() {
+    // Called synchronously from the export button click. Starting muted videos
+    // inside a user gesture unlocks playback on Android WebView versions that
+    // otherwise keep a preloaded video paused at its poster frame.
+    for (const video of this.videos.values()) {
+      if (!video) continue;
+      video.muted = true;
+      try { video.play().catch(() => {}); } catch { /* ignored */ }
+    }
+    setTimeout(() => {
+      for (const video of this.videos.values()) {
+        if (video && video.dataset.momentId !== this.activeVideoId) {
+          try { video.pause(); } catch { /* ignored */ }
+        }
+      }
+    }, 260);
   }
 
   _syncVideos(snap) {
@@ -979,6 +1022,11 @@ export class VlogComposer {
     this.map.destroy();
     this.videos.clear();
     this.images.clear();
+    if (this.videoHost) {
+      this.videoHost.replaceChildren();
+      this.videoHost.remove();
+      this.videoHost = null;
+    }
   }
 }
 

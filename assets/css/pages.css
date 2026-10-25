@@ -1500,11 +1500,12 @@
   margin-bottom: 0;
 }
 
-.moment-video__open {
+.moment-video__open,
+.moment-photo__open {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-top: 6px;
+  margin-top: 7px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1963,6 +1964,21 @@
   border-color: var(--accent);
   background: var(--accent);
   color: var(--white);
+}
+
+.music-audition {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 600;
 }
 
 .switch {

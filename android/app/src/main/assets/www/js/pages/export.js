@@ -4,6 +4,7 @@ import { hydrateTrip } from '../media.js';
 import { VlogComposer, exportVlog, pickMimeType, safeFilename } from '../vlog.js';
 import { THEME_LIST, getTheme } from '../themes.js';
 import { downloadBlob, shareBlobFile, formatBytes } from '../media.js';
+import { AmbientScore } from '../audio.js';
 import { icon } from '../icons.js';
 import { escapeHTML, toast, openSheet } from '../ui.js';
 import { formatDate, durationClock } from '../geo.js';
@@ -125,6 +126,8 @@ export async function renderExport(root, ctx) {
   let selectedTheme = theme.id;
   let music = true;
   let selectedMusic = 'dawn';
+  let auditionScore = null;
+  let auditionTimer = null;
   let exporting = false;
   let aborter = null;
   let composer = null;
@@ -177,6 +180,7 @@ export async function renderExport(root, ctx) {
         <button class="music-chip ${selectedMusic === 'dawn' ? 'is-active' : ''}" type="button" data-music-style="dawn">晨雾</button>
         <button class="music-chip ${selectedMusic === 'forest' ? 'is-active' : ''}" type="button" data-music-style="forest">林间</button>
         <button class="music-chip ${selectedMusic === 'night' ? 'is-active' : ''}" type="button" data-music-style="night">夜行</button>
+        <button class="music-audition" type="button" data-audition>${icon('play', 11)} 试听</button>
       </div>
     </section>
 
@@ -271,18 +275,60 @@ export async function renderExport(root, ctx) {
     });
   }
 
+  function auditionButton() {
+    return root.querySelector('[data-audition]');
+  }
+
+  async function stopAudition() {
+    clearTimeout(auditionTimer);
+    auditionTimer = null;
+    const score = auditionScore;
+    auditionScore = null;
+    const button = auditionButton();
+    if (button) button.innerHTML = `${icon('play', 11)} 试听`;
+    try { await score?.stop(); } catch { /* already closed */ }
+  }
+
+  async function toggleAudition() {
+    if (auditionScore) {
+      await stopAudition();
+      return;
+    }
+    if (!AmbientScore.isSupported()) {
+      toast('当前 WebView 不支持音频试听', { type: 'error' });
+      return;
+    }
+    music = true;
+    syncMusicUI();
+    const score = new AmbientScore();
+    try {
+      await score.start(8, selectedMusic);
+      auditionScore = score;
+      const button = auditionButton();
+      if (button) button.innerHTML = `${icon('pause', 11)} 停止试听`;
+      auditionTimer = setTimeout(() => { stopAudition(); }, 8000);
+    } catch (error) {
+      toast('试听失败，请重试', { type: 'error' });
+      try { await score.stop(); } catch { /* ignored */ }
+    }
+  }
+
   root.querySelector('[data-music]').addEventListener('click', () => {
     music = !music;
+    if (!music) stopAudition();
     syncMusicUI();
   });
 
   root.querySelectorAll('[data-music-style]').forEach((button) => {
     button.addEventListener('click', () => {
+      stopAudition();
       selectedMusic = button.dataset.musicStyle || 'dawn';
       music = true;
       syncMusicUI();
     });
   });
+
+  root.querySelector('[data-audition]')?.addEventListener('click', toggleAudition);
 
   root.querySelector('[data-info]').addEventListener('click', () => {
     openSheet({
@@ -304,6 +350,8 @@ export async function renderExport(root, ctx) {
       return;
     }
     exporting = true;
+    await stopAudition();
+    composer.primeVideos?.();
     aborter = new AbortController();
     generateButton.disabled = true;
     generateLabel.textContent = '正在生成';
@@ -362,6 +410,7 @@ export async function renderExport(root, ctx) {
   return {
     destroy() {
       aborter?.abort();
+      stopAudition();
       composer?.dispose();
       if (latestUrl) URL.revokeObjectURL(latestUrl);
       if (resultUrl) URL.revokeObjectURL(resultUrl);
