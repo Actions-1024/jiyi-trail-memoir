@@ -40,6 +40,13 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.MimeTypes;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.transformer.Composition;
+import androidx.media3.transformer.ExportException;
+import androidx.media3.transformer.ExportResult;
+import androidx.media3.transformer.Transformer;
 
 import org.json.JSONObject;
 
@@ -66,6 +73,7 @@ import java.util.Map;
  * (https://appassets.local), which gives the WebView a secure context for
  * geolocation, IndexedDB and the canvas MediaRecorder API.
  */
+@UnstableApi
 public class MainActivity extends Activity {
     private static final String APP_HOST = "appassets.androidplatform.net";
     private static final String START_URL = "https://" + APP_HOST + "/index.html";
@@ -606,6 +614,7 @@ public class MainActivity extends Activity {
             filePathCallback = null;
         }
         if (nativeBridge != null) {
+            nativeBridge.cancelTranscode();
             nativeBridge.closePending();
         }
         if (webView != null) {
@@ -629,6 +638,19 @@ public class MainActivity extends Activity {
         return name;
     }
 
+    private Uri publishVideo(File source, String mime) {
+        if (source == null || !source.exists()) return null;
+        try {
+            return saveToMediaStore(source, mime);
+        } catch (Exception mediaError) {
+            try {
+                return saveToAppStorage(source, mime);
+            } catch (Exception appError) {
+                return null;
+            }
+        }
+    }
+
     private class NativeBridge {
         private final Object saveLock = new Object();
         private File pendingFile;
@@ -637,9 +659,19 @@ public class MainActivity extends Activity {
         private Uri lastSavedUri;
         private String lastSavedMime = "video/webm";
 
+        private boolean shareAfterSave = false;
+        private boolean transcodeInProgress = false;
+        private Transformer transformer;
+        private File transcodeInput;
+        private File transcodeOutput;
+
         @JavascriptInterface
         public boolean beginSave(String filename, String mimeType) {
             synchronized (saveLock) {
+                if (transcodeInProgress) {
+                    toastOnUi("上一段视频还在转换为 MP4，请稍候");
+                    return false;
+                }
                 closePending();
                 try {
                     File dir = new File(getCacheDir(), "share");
@@ -673,38 +705,170 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String finishSave() {
-            Uri uri = null;
-            String mime;
+            final File input;
+            final String mime;
+            final boolean share;
             synchronized (saveLock) {
                 if (pendingOut == null || pendingFile == null) return "";
-                mime = pendingMime;
+                mime = (pendingMime == null || pendingMime.isEmpty()) ? "video/webm" : pendingMime;
+                share = shareAfterSave;
+                shareAfterSave = false;
                 try {
                     pendingOut.flush();
                     pendingOut.close();
-                    pendingOut = null;
-                    try {
-                        uri = saveToMediaStore(pendingFile, mime);
-                    } catch (Exception mediaError) {
-                        uri = saveToAppStorage(pendingFile, mime);
-                    }
-                    if (uri != null) {
-                        lastSavedUri = uri;
+                } catch (Exception error) {
+                    try { pendingOut.close(); } catch (Exception ignored) { }
+                }
+                pendingOut = null;
+                input = pendingFile;
+                pendingFile = null;
+                pendingMime = null;
+            }
+
+            if (input == null || !input.exists()) {
+                toastOnUi("视频保存失败，请重试");
+                return "";
+            }
+
+            // MediaRecorder on Android WebView normally produces VP9/Opus WebM.
+            // Android's Photos/Files players often cannot open WebM, so convert
+            // it to H.264/AAC MP4 before publishing to MediaStore.
+            if (mime.toLowerCase(Locale.ROOT).contains("webm")) {
+                synchronized (saveLock) {
+                    transcodeInProgress = true;
+                    transcodeShareAfter = share;
+                }
+                toastOnUi("正在转换为相册可播放的 MP4…");
+                if (startMp4Transcode(input)) return "processing";
+                synchronized (saveLock) { transcodeInProgress = false; }
+                Uri fallback = publishVideo(input, mime);
+                input.delete();
+                if (fallback != null) {
+                    synchronized (saveLock) {
+                        lastSavedUri = fallback;
                         lastSavedMime = mime;
                     }
-                } catch (Exception error) {
-                    uri = null;
-                } finally {
-                    if (pendingFile != null) pendingFile.delete();
-                    pendingFile = null;
-                    pendingMime = null;
+                    toastOnUi("MP4 转换不可用，已保存 WebM（部分相册不支持）");
+                    if (share) shareLast();
+                    return fallback.toString();
                 }
+                toastOnUi("视频保存失败，请重试");
+                return "";
             }
+
+            Uri uri = publishVideo(input, mime);
+            input.delete();
             if (uri != null) {
+                synchronized (saveLock) {
+                    lastSavedUri = uri;
+                    lastSavedMime = mime;
+                }
                 toastOnUi("已保存到 Movies/迹忆");
+                if (share) shareLast();
                 return uri.toString();
             }
             toastOnUi("视频保存失败，请重试");
             return "";
+        }
+
+        @JavascriptInterface
+        public void setShareAfterSave(boolean share) {
+            synchronized (saveLock) {
+                shareAfterSave = share;
+            }
+        }
+
+        private boolean startMp4Transcode(File input) {
+            if (transformer != null) return false;
+            String name = input.getName();
+            if (name.toLowerCase(Locale.ROOT).endsWith(".webm")) {
+                name = name.substring(0, name.length() - 5);
+            }
+            File output = new File(input.getParentFile(), name + ".mp4");
+            if (output.exists()) output.delete();
+            transcodeInput = input;
+            transcodeOutput = output;
+            runOnUiThread(() -> {
+                try {
+                    transformer = new Transformer.Builder(MainActivity.this)
+                            .setVideoMimeType(MimeTypes.VIDEO_H264)
+                            .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                            .build();
+                    transformer.addListener(new Transformer.Listener() {
+                        @Override
+                        public void onCompleted(Composition composition, ExportResult exportResult) {
+                            finishTranscode(true);
+                        }
+
+                        @Override
+                        public void onError(Composition composition, ExportResult exportResult,
+                                            ExportException exportException) {
+                            finishTranscode(false);
+                        }
+                    });
+                    transformer.start(MediaItem.fromUri(Uri.fromFile(input)), output.getAbsolutePath());
+                } catch (Exception error) {
+                    finishTranscode(false);
+                }
+            });
+            return true;
+        }
+
+        private void finishTranscode(boolean success) {
+            File input = transcodeInput;
+            File output = transcodeOutput;
+            if (input == null && output == null) return;
+            boolean share = transcodeShareAfter;
+            transcodeInput = null;
+            transcodeOutput = null;
+            transformer = null;
+            synchronized (saveLock) {
+                transcodeInProgress = false;
+                transcodeShareAfter = false;
+            }
+
+            Uri uri = null;
+            String savedMime = "video/mp4";
+            if (success && output != null) {
+                uri = publishVideo(output, "video/mp4");
+            }
+            if (uri == null && input != null) {
+                savedMime = "video/webm";
+                uri = publishVideo(input, "video/webm");
+            }
+            if (input != null) input.delete();
+            if (output != null) output.delete();
+
+            synchronized (saveLock) {
+                if (uri != null) {
+                    lastSavedUri = uri;
+                    lastSavedMime = savedMime;
+                }
+            }
+            if (uri == null) {
+                toastOnUi("视频保存失败，请重试");
+                return;
+            }
+            toastOnUi(success
+                    ? "Vlog 已转换为 MP4 并保存到相册"
+                    : "MP4 转换失败，已保存 WebM（可用播放器打开）");
+            if (share) shareLast();
+        }
+
+        private void cancelTranscode() {
+            Transformer active = transformer;
+            transformer = null;
+            if (active != null) {
+                try { active.cancel(); } catch (Exception ignored) { }
+            }
+            if (transcodeInput != null) transcodeInput.delete();
+            if (transcodeOutput != null) transcodeOutput.delete();
+            transcodeInput = null;
+            transcodeOutput = null;
+            synchronized (saveLock) {
+                transcodeInProgress = false;
+                transcodeShareAfter = false;
+            }
         }
 
         @JavascriptInterface

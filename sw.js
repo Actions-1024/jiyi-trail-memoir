@@ -1,4 +1,4 @@
-const CACHE = 'jiyi-v9';
+const CACHE = 'jiyi-v10';
 const CORE = [
   './',
   './index.html',

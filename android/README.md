@@ -127,7 +127,8 @@ android/
 
 - **没有后台定位**：App 退到后台后，系统可能暂停位置更新。徒步时请保持 App 在前台；如果需要锁屏记录，还需增加前台服务。
 - **视频编码依赖 WebView**：现代 Android WebView（Chromium）支持 `canvas.captureStream` 和 `MediaRecorder`。极旧或定制 WebView 可能不支持，界面会显示“不支持视频导出”。
-- **WebM 相册兼容性**：部分相册不索引 WebM。文件会保存到 `Movies/迹忆`，可在“文件”中找到，也可直接用分享面板发送。
+- **MP4 自动转换**：Android WebView 通常输出 VP9/Opus WebM，相册往往不识别。现在保存前会用 Media3 Transformer 转成 **H.264/AAC MP4**，再写入 `Movies/迹忆`；转换失败时才回退保存 WebM，并在 Toast 中提示。
+- **相册缓存**：部分相册需要下拉刷新或重新扫描媒体库才能看到新视频；文件实际位于 `Movies/迹忆`。
 - **地图瓦片**：在线标准地图需要网络；无网络时自动使用手绘轨迹示意图。
 - **未做 release 签名**：见上文，正式分发前替换签名。
 - **iPhone**：这个工程只适用于 Android；iPhone 请使用 PWA「添加到主屏幕」或 Apple 开发者账号分发。
@@ -139,7 +140,8 @@ JavaScript 侧检测到 `window.JiyiAndroid` 后会启用原生保存/分享：
 ```text
 beginSave(filename, mimeType) -> boolean
 appendSave(base64Chunk)       -> boolean
-finishSave()                  -> content:// URI 或 ""
+finishSave()                  -> content:// URI、"" 或 "processing"
+setShareAfterSave(boolean)    -> 转码完成后自动打开分享面板
 shareLast()                   -> 打开系统分享面板
 toast(message)
 setKeepScreenOn(boolean)

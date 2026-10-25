@@ -116,7 +116,10 @@ export async function fixWebmDuration(blob, durationSeconds) {
       return new Blob([out], { type: blob.type || 'video/webm' });
     }
 
-    const durationBytes = new Uint8Array(11);
+    // EBML ID (2 bytes) + size (1 byte) + 4-byte float = 7 bytes.
+    // Extra zero bytes would leave a partial child inside Info and make strict
+    // demuxers (including Android's media stack) reject the file.
+    const durationBytes = new Uint8Array(7);
     durationBytes[0] = 0x44;
     durationBytes[1] = 0x89;
     durationBytes[2] = 0x84;

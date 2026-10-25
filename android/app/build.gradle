@@ -47,4 +47,8 @@ android {
 
 dependencies {
     implementation 'androidx.core:core:1.13.1'
+    // WebView records WebM (VP9/Opus) on most Android devices. Media3
+    // Transformer converts that intermediate file to gallery-friendly MP4
+    // (H.264/AAC) before it is written to MediaStore.
+    implementation 'androidx.media3:media3-transformer:1.4.1'
 }

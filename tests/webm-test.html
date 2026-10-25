@@ -44,7 +44,14 @@ window.runTest = () => new Promise(async (resolve, reject) => {
       const rawDuration = probe.duration;
       video.src = fixedUrl;
       await new Promise((r) => { video.onloadedmetadata = r; video.onerror = r; setTimeout(r, 2500); });
-      const result = { rawSize: raw.size, fixedSize: fixed.size, rawDuration, fixedDuration: video.duration, seekable: video.seekable.length ? video.seekable.end(0) : null };
+      const result = {
+        rawSize: raw.size,
+        fixedSize: fixed.size,
+        addedBytes: fixed.size - raw.size,
+        rawDuration,
+        fixedDuration: video.duration,
+        seekable: video.seekable.length ? video.seekable.end(0) : null,
+      };
       out.textContent = JSON.stringify(result, null, 2);
       resolve(result);
     };

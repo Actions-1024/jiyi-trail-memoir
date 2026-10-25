@@ -292,10 +292,11 @@ function bytesToBase64(bytes) {
 
 // Saves a large Blob through the Android shell in small Base64 chunks. Sending
 // a 15 MB video as one JS-bridge string would be fragile and memory hungry.
-async function saveBlobViaNative(blob, filename) {
+async function saveBlobViaNative(blob, filename, share = false) {
   const bridge = nativeVideoBridge();
   if (!bridge) return '';
   const mime = blob.type || 'video/webm';
+  try { bridge.setShareAfterSave?.(share); } catch { /* bridge optional */ }
   if (!bridge.beginSave(filename, mime)) return '';
   try {
     const buffer = await blob.arrayBuffer();
@@ -320,8 +321,8 @@ export async function downloadBlob(blob, filename) {
   const bridge = nativeVideoBridge();
   if (bridge) {
     try { bridge.toast?.('正在保存视频…'); } catch { /* bridge optional */ }
-    const uri = await saveBlobViaNative(blob, filename);
-    if (uri) return true;
+    const result = await saveBlobViaNative(blob, filename, false);
+    if (result) return true;
   }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -339,11 +340,10 @@ export async function shareBlobFile(blob, filename, title, text) {
   const bridge = nativeVideoBridge();
   if (bridge && typeof bridge.shareLast === 'function') {
     try { bridge.toast?.('正在准备分享…'); } catch { /* bridge optional */ }
-    const uri = await saveBlobViaNative(blob, filename);
-    if (uri) {
-      bridge.shareLast();
-      return true;
-    }
+    const result = await saveBlobViaNative(blob, filename, true);
+    // Native converts WebM to MP4 and opens the share sheet only after the
+    // conversion has finished, so the shared file is gallery-friendly.
+    if (result) return true;
   }
   if (!navigator.canShare) return false;
   const file = new File([blob], filename, { type: blob.type || 'video/webm' });
