@@ -42,6 +42,12 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Cache Android debug keystore
+        uses: actions/cache@v6
+        with:
+          path: ~/.android/debug.keystore
+          key: jiyi-debug-keystore-v1
+
       - name: Sync web assets
         shell: bash
         run: |
