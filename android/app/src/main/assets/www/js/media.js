@@ -35,7 +35,11 @@ function loadImage(file) {
 async function decodeImage(file) {
   if ('createImageBitmap' in window) {
     try {
-      return await createImageBitmap(file, { imageOrientation: 'from-image' });
+      return await createImageBitmap(file, {
+        imageOrientation: 'from-image',
+        resizeWidth: 1600,
+        resizeQuality: 'high',
+      });
     } catch {
       // Safari can fail on some orientation/format combinations; fall through.
     }
@@ -64,10 +68,12 @@ export async function preparePhoto(file) {
   } catch (error) {
     throw new Error(error.message || '图片格式暂不支持');
   }
-  const canvas = drawContained(source, 1800);
-  const blob = await canvasToBlob(canvas, 'image/jpeg', 0.86);
-  const thumbCanvas = drawContained(source, 520);
-  const thumbBlob = await canvasToBlob(thumbCanvas, 'image/jpeg', 0.78);
+  // 1600px is plenty for a 9:16 Vlog card and is noticeably faster to
+  // decode/resize than a full 12–48MP camera frame.
+  const canvas = drawContained(source, 1600);
+  const blob = await canvasToBlob(canvas, 'image/jpeg', 0.84);
+  const thumbCanvas = drawContained(source, 480);
+  const thumbBlob = await canvasToBlob(thumbCanvas, 'image/jpeg', 0.76);
   source.close?.();
   return {
     type: 'photo',

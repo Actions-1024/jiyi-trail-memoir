@@ -32,6 +32,9 @@ export class TrackRecorder {
     this._nativeTimeout = null;
     this._nativeLastTime = 0;
     this._nativeLastError = '';
+    this._backgroundTimer = null;
+    this._backgroundLastTime = 0;
+    this._backgroundLastError = '';
   }
 
   _hasNativeLocation() {
@@ -39,6 +42,13 @@ export class TrackRecorder {
       && !!window.JiyiAndroid
       && typeof window.JiyiAndroid.startLocationUpdates === 'function'
       && typeof window.JiyiAndroid.getLocationJson === 'function';
+  }
+
+  _hasBackgroundTracking() {
+    return typeof window !== 'undefined'
+      && !!window.JiyiAndroid
+      && typeof window.JiyiAndroid.startBackgroundTracking === 'function'
+      && typeof window.JiyiAndroid.getTrackPointsSince === 'function';
   }
 
   get isRecording() {
@@ -56,9 +66,11 @@ export class TrackRecorder {
   }
 
   async start() {
-    if (!this._hasNativeLocation() && !('geolocation' in navigator)) {
+    const hasBackground = this._hasBackgroundTracking();
+    if (!hasBackground && !this._hasNativeLocation() && !('geolocation' in navigator)) {
       throw new Error('当前设备不支持定位，请检查系统权限');
     }
+    const freshTrack = this.points.length === 0;
     if (this.watchId != null && navigator.geolocation) {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
@@ -68,7 +80,8 @@ export class TrackRecorder {
     this.onStatus('locating');
     this.firstFixAt = null;
     await this._requestWakeLock();
-    if (this._hasNativeLocation()) this._startNativeWatch();
+    if (hasBackground) this._startBackgroundTracking(freshTrack);
+    else if (this._hasNativeLocation()) this._startNativeWatch();
     else this._watch();
     return this;
   }
@@ -89,6 +102,78 @@ export class TrackRecorder {
         timeout: 20_000,
       },
     );
+  }
+
+  _startBackgroundTracking(clearExisting) {
+    clearInterval(this._backgroundTimer);
+    this._backgroundTimer = null;
+    this._backgroundLastTime = this.lastPoint?.t || 0;
+    this._backgroundLastError = '';
+    try {
+      window.JiyiAndroid.startBackgroundTracking(!!clearExisting);
+    } catch {
+      this._startNativeWatch();
+      return;
+    }
+    this._nativeLastError = '';
+    this._backgroundTimer = setInterval(() => this._pollBackgroundTracking(), 900);
+    this._clearNativeTimeout();
+    this._nativeTimeout = setTimeout(() => {
+      if (this.state === 'locating' && this.points.length === 0) {
+        this.onError(new Error('定位超时，请到开阔处或检查系统 GPS / 网络定位'));
+        this.onStatus('error');
+      }
+    }, 25_000);
+    setTimeout(() => this._pollBackgroundTracking(), 250);
+  }
+
+  _pollBackgroundTracking() {
+    if (!this._hasBackgroundTracking()) return;
+    if (this.state === 'paused' || this.state === 'stopped' || this.state === 'idle') return;
+    try {
+      const bridge = window.JiyiAndroid;
+      const error = bridge.getBackgroundLocationError?.() || '';
+      if (error) {
+        if (error !== this._backgroundLastError) {
+          this._backgroundLastError = error;
+          this.onError(new Error(error));
+          this.onStatus('error');
+        }
+        return;
+      }
+      this._backgroundLastError = '';
+      const since = Math.max(0, this._backgroundLastTime - 1500);
+      const json = bridge.getTrackPointsSince?.(since) || '[]';
+      const fixes = JSON.parse(json);
+      if (!Array.isArray(fixes) || !fixes.length) return;
+      for (const fix of fixes) {
+        if (!Number.isFinite(fix.lat) || !Number.isFinite(fix.lng)) continue;
+        const time = Number(fix.time) || 0;
+        if (time && time <= this._backgroundLastTime) continue;
+        if (time) this._backgroundLastTime = time;
+        this._handlePosition({
+          coords: {
+            latitude: fix.lat,
+            longitude: fix.lng,
+            altitude: Number.isFinite(fix.alt) ? fix.alt : null,
+            accuracy: Number.isFinite(fix.accuracy) ? fix.accuracy : null,
+            speed: Number.isFinite(fix.speed) ? fix.speed : null,
+            heading: Number.isFinite(fix.heading) ? fix.heading : null,
+          },
+          timestamp: time || Date.now(),
+        }, time || Date.now());
+      }
+    } catch (error) {
+      // A malformed bridge response should not kill the polling loop.
+    }
+  }
+
+  _stopBackgroundWatch() {
+    clearInterval(this._backgroundTimer);
+    this._backgroundTimer = null;
+    if (this._hasBackgroundTracking()) {
+      try { window.JiyiAndroid.stopBackgroundTracking?.(); } catch { /* optional */ }
+    }
   }
 
   _startNativeWatch() {
@@ -142,7 +227,7 @@ export class TrackRecorder {
           heading: Number.isFinite(fix.heading) ? fix.heading : null,
         },
         timestamp: fixTime || Date.now(),
-      });
+      }, fixTime || Date.now());
     } catch (error) {
       // A malformed bridge response should not kill the polling loop.
     }
@@ -165,11 +250,11 @@ export class TrackRecorder {
     this._nativeTimeout = null;
   }
 
-  _handlePosition(position) {
+  _handlePosition(position, timestamp = Date.now()) {
     if (this.state === 'paused' || this.state === 'idle' || this.state === 'stopped') return;
     const { latitude, longitude, altitude, accuracy, speed, heading } = position.coords;
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
-    const now = Date.now();
+    const now = Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now();
     const raw = {
       lat: latitude,
       lng: longitude,
@@ -224,6 +309,7 @@ export class TrackRecorder {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
+    this._stopBackgroundWatch();
     this._stopNativeWatch();
     this._releaseWakeLock();
     this.onStatus('paused');
@@ -238,7 +324,8 @@ export class TrackRecorder {
     this.lastPoint = this.points[this.points.length - 1] || null;
     this.onStatus('recording');
     this._requestWakeLock();
-    if (this._hasNativeLocation()) this._startNativeWatch();
+    if (this._hasBackgroundTracking()) this._startBackgroundTracking(false);
+    else if (this._hasNativeLocation()) this._startNativeWatch();
     else this._watch();
     this._saveDraft();
   }
@@ -249,6 +336,7 @@ export class TrackRecorder {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
+    this._stopBackgroundWatch();
     this._stopNativeWatch();
     this._releaseWakeLock();
     clearTimeout(this._tick);
@@ -262,6 +350,7 @@ export class TrackRecorder {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
+    this._stopBackgroundWatch();
     this._stopNativeWatch();
     this._releaseWakeLock();
     clearTimeout(this._tick);

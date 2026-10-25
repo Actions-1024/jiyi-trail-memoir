@@ -438,6 +438,11 @@ export async function renderRecord(root, ctx) {
           <span class="capture-option__text"><strong>拍摄照片</strong><small>打开相机，定格眼前的风景</small></span>
           <span class="capture-option__chev">${icon('chevron', 18)}</span>
         </button>
+        <button class="capture-option" type="button" data-camera-video>
+          <span class="capture-option__icon">${icon('video', 24)}</span>
+          <span class="capture-option__text"><strong>录制视频</strong><small>直接用相机录一段现场画面</small></span>
+          <span class="capture-option__chev">${icon('chevron', 18)}</span>
+        </button>
         <button class="capture-option" type="button" data-gallery>
           <span class="capture-option__icon">${icon('image', 24)}</span>
           <span class="capture-option__text"><strong>照片或视频</strong><small>从相册里选一段刚拍下的画面</small></span>
@@ -451,17 +456,21 @@ export async function renderRecord(root, ctx) {
       </div>
       <p class="capture-footnote">${icon('pin', 12)} 会自动记录当前位置与时间</p>
       <input type="file" accept="image/*" capture="environment" data-camera-input hidden>
+      <input type="file" accept="video/*" capture="environment" data-camera-video-input hidden>
       <input type="file" accept="image/*,video/*" data-gallery-input hidden>
     `;
     const cameraInput = container.querySelector('[data-camera-input]');
+    const cameraVideoInput = container.querySelector('[data-camera-video-input]');
     const galleryInput = container.querySelector('[data-gallery-input]');
     container.querySelector('[data-camera]').addEventListener('click', () => cameraInput.click());
+    container.querySelector('[data-camera-video]').addEventListener('click', () => cameraVideoInput.click());
     container.querySelector('[data-gallery]').addEventListener('click', () => galleryInput.click());
     container.querySelector('[data-write]').addEventListener('click', () => {
       close();
       setTimeout(() => openNoteEditor(), 180);
     });
     cameraInput.addEventListener('change', () => handleFile(cameraInput.files?.[0], container, context, close));
+    cameraVideoInput.addEventListener('change', () => handleFile(cameraVideoInput.files?.[0], container, context, close));
     galleryInput.addEventListener('change', () => handleFile(galleryInput.files?.[0], container, context, close));
   }
 
@@ -897,9 +906,17 @@ export async function renderRecord(root, ctx) {
   // Events.
   $('[data-exit]', root).addEventListener('click', requestExit);
   $('[data-layer]', root).addEventListener('click', () => {
-    state.basemap = state.basemap === 'sketch' ? 'streets' : 'sketch';
+    state.basemap = state.basemap === 'sketch'
+      ? 'streets'
+      : state.basemap === 'streets' ? 'satellite' : 'sketch';
     map.setBasemap(state.basemap);
-    toast(state.basemap === 'streets' ? '正在加载标准地图 · 无网络时自动显示手绘轨迹' : '已切换手绘轨迹图');
+    toast(
+      state.basemap === 'streets'
+        ? '正在加载标准地图 · 无网络时自动显示手绘轨迹'
+        : state.basemap === 'satellite'
+          ? '正在加载卫星地图 · 需要网络'
+          : '已切换手绘轨迹图',
+    );
   });
   photoBtn.addEventListener('click', () => openMomentCreator('photo'));
   noteBtn.addEventListener('click', () => openNoteEditor());

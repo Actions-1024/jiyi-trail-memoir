@@ -1492,6 +1492,28 @@
   object-fit: cover;
 }
 
+.moment-video {
+  margin-bottom: 12px;
+}
+
+.moment-video .moment-media {
+  margin-bottom: 0;
+}
+
+.moment-video__open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-deep, #2d5a45);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+}
+
 .moment-media-button {
   position: relative;
   display: block;
@@ -1918,6 +1940,29 @@
   margin-top: 1px;
   color: var(--muted);
   font-size: 8px;
+}
+
+.music-options {
+  display: flex;
+  gap: 7px;
+  margin: 10px 0 0 44px;
+}
+
+.music-chip {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 253, 247, 0.55);
+  color: var(--muted);
+  font: inherit;
+  font-size: 9px;
+  transition: all 0.18s var(--ease);
+}
+
+.music-chip.is-active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--white);
 }
 
 .switch {

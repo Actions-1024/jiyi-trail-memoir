@@ -256,21 +256,29 @@ export class VlogComposer {
     if (!src) return null;
     if (this.videos.has(moment.id)) return this.videos.get(moment.id);
     const video = document.createElement('video');
-    video.src = src;
     video.muted = true;
+    video.autoplay = true;
     video.playsInline = true;
+    video.setAttribute('webkit-playsinline', '');
     video.loop = true;
     video.preload = 'auto';
-    video.crossOrigin = 'anonymous';
+    video.disablePictureInPicture = true;
     const loaded = new Promise((resolve) => {
-      const done = () => resolve(video);
+      const done = () => {
+        video.play().catch(() => {});
+        resolve(video);
+      };
       video.addEventListener('loadeddata', done, { once: true });
+      video.addEventListener('canplay', done, { once: true });
       video.addEventListener('error', () => resolve(null), { once: true });
-      setTimeout(() => resolve(video.readyState >= 2 ? video : null), 7000);
+      setTimeout(() => resolve(video.readyState >= 2 ? video : null), 20_000);
     });
+    // Blob URLs from IndexedDB are already same-origin; setting crossOrigin
+    // after src (as the old code did) can make Safari/WebView refuse to decode.
+    video.src = src;
     video.load();
     const result = await loaded;
-    this.videos.set(moment.id, result);
+    if (result) this.videos.set(moment.id, result);
     return result;
   }
 
@@ -1004,7 +1012,7 @@ export function safeFilename(value) {
   return String(value || 'journey').replace(/[\\/:*?"<>|\s]+/g, '-').slice(0, 42);
 }
 
-export async function exportVlog({ composer, music = true, onProgress = () => {}, signal }) {
+export async function exportVlog({ composer, music = true, musicStyle = 'dawn', onProgress = () => {}, signal }) {
   if (typeof MediaRecorder === 'undefined') {
     throw new Error('当前浏览器不支持视频导出，请使用 Chrome / Edge 或系统相册打开');
   }
@@ -1019,7 +1027,7 @@ export async function exportVlog({ composer, music = true, onProgress = () => {}
   if (music && AmbientScore.isSupported()) {
     try {
       score = new AmbientScore();
-      const audioStream = await score.start(composer.duration + 0.5);
+      const audioStream = await score.start(composer.duration + 0.5, musicStyle);
       audioStream?.getAudioTracks().forEach((track) => stream.addTrack(track));
     } catch (error) {
       console.warn('Ambient audio unavailable', error);

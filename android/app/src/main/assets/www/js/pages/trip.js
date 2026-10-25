@@ -1,6 +1,7 @@
 import { loadTrip } from '../data.js';
 import { TrailMap } from '../map.js';
 import { getLatestExport, deleteTrip } from '../db.js';
+import { hydrateTrip } from '../media.js';
 import { formatDate, formatClock, durationClock, paceLabel } from '../geo.js';
 import { icon } from '../icons.js';
 import {
@@ -14,7 +15,10 @@ import {
 function momentMedia(moment) {
   if (!moment.src) return '';
   if (moment.type === 'video' || moment.mediaType === 'video') {
-    return `<video class="moment-media" src="${moment.videoSrc || moment.src}" controls playsinline preload="metadata" poster="${moment.thumbUrl || ''}"></video>`;
+    return `<div class="moment-video">
+      <video class="moment-media" src="${moment.videoSrc || moment.src}" controls playsinline preload="metadata" poster="${moment.thumbUrl || ''}"></video>
+      <button class="moment-video__open" type="button" data-preview="${encodeURIComponent(moment.id)}">${icon('play', 13)} 全屏播放</button>
+    </div>`;
   }
   return `<button class="moment-media-button" type="button" data-preview="${encodeURIComponent(moment.id)}">
     <img class="moment-media" src="${moment.src}" alt="${escapeHTML(moment.title || '沿途照片')}" loading="lazy" />
@@ -58,7 +62,8 @@ function momentCard(moment, index) {
 
 export async function renderTrip(root, ctx) {
   const id = ctx.params[0];
-  const trip = await loadTrip(id);
+  const storedTrip = await loadTrip(id);
+  const trip = storedTrip ? await hydrateTrip(storedTrip) : null;
   if (!trip) {
     root.innerHTML = `<div class="screen"><div class="fatal-error">
       <span>NOT FOUND</span><h1>这段旅程找不到了</h1><p>它可能已经被删除。</p>
@@ -186,7 +191,12 @@ export async function renderTrip(root, ctx) {
     button.addEventListener('click', () => {
       const moment = sortedMoments.find((m) => m.id === decodeURIComponent(button.dataset.preview));
       if (!moment) return;
-      openMediaPreview(moment.src, moment.type === 'video' || moment.mediaType === 'video' ? 'video' : 'photo', moment.title || moment.text || '');
+      const isVideo = moment.type === 'video' || moment.mediaType === 'video';
+      openMediaPreview(
+        isVideo ? (moment.videoSrc || moment.src) : moment.src,
+        isVideo ? 'video' : 'photo',
+        moment.title || moment.text || '',
+      );
     });
   });
 

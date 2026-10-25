@@ -123,9 +123,19 @@ android/
 
 所以现在即使 WebView 的定位实现失效，原生壳也会优先使用系统定位。
 
+## 后台记录
+
+记录开始后会启动 `TrackingService`：
+
+- 前台服务 + 常驻通知 + `PARTIAL_WAKE_LOCK`，锁屏或切到后台仍接收 GPS/网络定位；
+- 每个定位点追加到 `active-track.jsonl`，WebView 恢复时按时间戳补拉；
+- 只有用户点击「结束」或离开记录页才会停止服务；
+- 通知可以从通知栏点回 App。
+
+部分厂商的省电策略仍可能杀掉前台服务；如果长时间徒步，建议在系统设置里把「迹忆」设为「不限制电量 / 允许后台活动」。Android 13+ 还需要允许通知，否则服务在任务管理器里可见但通知栏可能不显示。
+
 ## 已知边界
 
-- **没有后台定位**：App 退到后台后，系统可能暂停位置更新。徒步时请保持 App 在前台；如果需要锁屏记录，还需增加前台服务。
 - **视频编码依赖 WebView**：现代 Android WebView（Chromium）支持 `canvas.captureStream` 和 `MediaRecorder`。极旧或定制 WebView 可能不支持，界面会显示“不支持视频导出”。
 - **MP4 自动转换**：Android WebView 通常输出 VP9/Opus WebM，相册往往不识别。现在保存前会用 Media3 Transformer 转成 **H.264/AAC MP4**，再写入 `Movies/迹忆`；转换失败时才回退保存 WebM，并在 Toast 中提示。
 - **相册缓存**：部分相册需要下拉刷新或重新扫描媒体库才能看到新视频；文件实际位于 `Movies/迹忆`。

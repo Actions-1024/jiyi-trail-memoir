@@ -1,5 +1,6 @@
 import { loadTrip } from '../data.js';
 import { getLatestExport, saveExport, deleteExport } from '../db.js';
+import { hydrateTrip } from '../media.js';
 import { VlogComposer, exportVlog, pickMimeType, safeFilename } from '../vlog.js';
 import { THEME_LIST, getTheme } from '../themes.js';
 import { downloadBlob, shareBlobFile, formatBytes } from '../media.js';
@@ -110,7 +111,8 @@ function resultMarkup(record, url) {
 }
 
 export async function renderExport(root, ctx) {
-  const trip = await loadTrip(ctx.params[0]);
+  const storedTrip = await loadTrip(ctx.params[0]);
+  const trip = storedTrip ? await hydrateTrip(storedTrip) : null;
   if (!trip) {
     root.innerHTML = `<div class="screen"><div class="fatal-error"><span>NOT FOUND</span><h1>这段旅程找不到了</h1><p>它可能已经被删除。</p><a class="button button--primary" href="#/">回到首页</a></div></div>`;
     return { destroy() {} };
@@ -122,6 +124,7 @@ export async function renderExport(root, ctx) {
   let latestUrl = latestExport?.blob ? URL.createObjectURL(latestExport.blob) : null;
   let selectedTheme = theme.id;
   let music = true;
+  let selectedMusic = 'dawn';
   let exporting = false;
   let aborter = null;
   let composer = null;
@@ -169,6 +172,11 @@ export async function renderExport(root, ctx) {
           <small>浏览器实时合成的轻柔环境音</small>
         </div>
         <button class="switch ${music ? 'is-on' : ''}" type="button" role="switch" aria-checked="${music}" data-music><span></span></button>
+      </div>
+      <div class="music-options" data-music-options>
+        <button class="music-chip ${selectedMusic === 'dawn' ? 'is-active' : ''}" type="button" data-music-style="dawn">晨雾</button>
+        <button class="music-chip ${selectedMusic === 'forest' ? 'is-active' : ''}" type="button" data-music-style="forest">林间</button>
+        <button class="music-chip ${selectedMusic === 'night' ? 'is-active' : ''}" type="button" data-music-style="night">夜行</button>
       </div>
     </section>
 
@@ -254,11 +262,26 @@ export async function renderExport(root, ctx) {
     });
   });
 
-  root.querySelector('[data-music]').addEventListener('click', (button) => {
+  function syncMusicUI() {
+    const toggle = root.querySelector('[data-music]');
+    toggle?.classList.toggle('is-on', music);
+    toggle?.setAttribute('aria-checked', String(music));
+    root.querySelectorAll('[data-music-style]').forEach((button) => {
+      button.classList.toggle('is-active', music && button.dataset.musicStyle === selectedMusic);
+    });
+  }
+
+  root.querySelector('[data-music]').addEventListener('click', () => {
     music = !music;
-    const el = button.currentTarget;
-    el.classList.toggle('is-on', music);
-    el.setAttribute('aria-checked', String(music));
+    syncMusicUI();
+  });
+
+  root.querySelectorAll('[data-music-style]').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectedMusic = button.dataset.musicStyle || 'dawn';
+      music = true;
+      syncMusicUI();
+    });
   });
 
   root.querySelector('[data-info]').addEventListener('click', () => {
@@ -268,7 +291,7 @@ export async function renderExport(root, ctx) {
       content: `<div class="info-list">
         <div class="info-item"><span>${icon('clock', 18)}</span><div><strong>生成需要一点时间</strong><p>视频按 1:1 实时合成，时长与成片一致，请保持页面在前台。</p></div></div>
         <div class="info-item"><span>${icon('video', 18)}</span><div><strong>MP4 / WebM</strong><p>浏览器会自动选择可用的格式。iPhone 可在分享菜单中保存到「照片」。</p></div></div>
-        <div class="info-item"><span>${icon('music', 18)}</span><div><strong>原创环境音</strong><p>配乐由浏览器实时合成，不使用外部音乐素材。</p></div></div>
+        <div class="info-item"><span>${icon('music', 18)}</span><div><strong>原创环境音</strong><p>晨雾 / 林间 / 夜行三种氛围由浏览器实时合成，不使用外部音乐素材。</p></div></div>
         <div class="info-item"><span>${icon('lock', 18)}</span><div><strong>只在本机</strong><p>轨迹、照片和视频都不会上传。清理浏览器数据会同时删除它们。</p></div></div>
       </div>`,
     });
@@ -291,6 +314,7 @@ export async function renderExport(root, ctx) {
       const record = await exportVlog({
         composer,
         music,
+        musicStyle: selectedMusic,
         signal: aborter.signal,
         onProgress: (progress, elapsed) => overlay.update(progress, elapsed),
       });

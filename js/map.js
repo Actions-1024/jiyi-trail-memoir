@@ -131,8 +131,8 @@ function tileKey(z, x, y) {
   return `${z}/${x}/${y}`;
 }
 
-function getTile(z, x, y, themeId) {
-  const key = `${themeId}:${tileKey(z, x, y)}`;
+function getTile(z, x, y, themeId, basemap = 'streets') {
+  const key = `${basemap}:${themeId}:${tileKey(z, x, y)}`;
   if (tileCache.has(key)) return tileCache.get(key);
   const entry = { image: null, status: 'loading' };
   const image = new Image();
@@ -150,7 +150,9 @@ function getTile(z, x, y, themeId) {
     entry.status = 'error';
     tileCache.set(key, entry);
   };
-  image.src = `https://a.basemaps.cartocdn.com/${style}/${z}/${x}/${y}.png`;
+  image.src = basemap === 'satellite'
+    ? `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
+    : `https://a.basemaps.cartocdn.com/${style}/${z}/${x}/${y}.png`;
   tileCache.set(key, entry);
   return entry;
 }
@@ -257,6 +259,7 @@ export class TrailMap {
 
   setBasemap(mode) {
     this.basemap = mode;
+    this._tilesPainted = 0;
     this.requestDraw();
   }
 
@@ -524,7 +527,7 @@ export class TrailMap {
     this._drawContours(ctx);
     const demoVisible = this.zoom > 9 && this._intersects(this._viewBounds(), DEMO_BOUNDS);
     if (demoVisible) this._drawWestLake(ctx);
-    if (this.basemap === 'streets') this._drawTiles(ctx);
+    if (this.basemap === 'streets' || this.basemap === 'satellite') this._drawTiles(ctx);
     if (this._grain) {
       const pattern = ctx.createPattern(this._grain, 'repeat');
       ctx.save();
@@ -666,7 +669,7 @@ export class TrailMap {
     for (let ty = y0; ty <= y1; ty++) {
       for (let tx = x0; tx <= x1; tx++) {
         if (tx < 0 || ty < 0 || tx >= n || ty >= n) continue;
-        const entry = getTile(z, tx, ty, this.theme.id);
+        const entry = getTile(z, tx, ty, this.theme.id, this.basemap);
         if (entry.status !== 'ready') {
           entry.onReady = () => this.requestDraw();
           continue;
@@ -681,8 +684,13 @@ export class TrailMap {
     }
     this._tilesPainted = painted;
     ctx.globalAlpha = 1;
-    if (painted) {
+    if (painted && this.basemap !== 'satellite') {
       ctx.fillStyle = this.theme.id === 'night' ? 'rgba(7, 19, 15, 0.5)' : 'rgba(247, 241, 228, 0.2)';
+      ctx.fillRect(0, 0, this.width, this.height);
+    }
+    if (painted && this.basemap === 'satellite') {
+      // Keep route lines legible without washing out the imagery.
+      ctx.fillStyle = 'rgba(7, 19, 15, 0.08)';
       ctx.fillRect(0, 0, this.width, this.height);
     }
   }
@@ -900,9 +908,12 @@ export class TrailMap {
 
   _drawAttribution(ctx) {
     if (!this.showAttribution) return;
-    const showingTiles = this.basemap === 'streets' && (this._tilesPainted ?? 0) > 0;
+    const showingTiles = (this.basemap === 'streets' || this.basemap === 'satellite')
+      && (this._tilesPainted ?? 0) > 0;
     const text = showingTiles
-      ? '© OpenStreetMap · © CARTO'
+      ? (this.basemap === 'satellite'
+        ? '© Esri, Maxar, Earthstar Geographics'
+        : '© OpenStreetMap · © CARTO')
       : '手绘地图 · 仅作轨迹示意';
     ctx.save();
     ctx.font = '400 8.5px "PingFang SC", sans-serif';

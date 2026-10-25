@@ -83,6 +83,7 @@ public class MainActivity extends Activity {
     private static final int REQ_CAMERA_VIDEO = 4103;
     private static final int REQ_LOCATION = 4201;
     private static final int REQ_NATIVE_LOCATION = 4202;
+    private static final int REQ_BACKGROUND_LOCATION = 4203;
 
     private WebView webView;
     private View splash;
@@ -102,6 +103,8 @@ public class MainActivity extends Activity {
     private volatile String nativeLocationError;
     private boolean nativeLocationStarted = false;
     private boolean nativeLocationPermissionPending = false;
+    private boolean backgroundLocationPermissionPending = false;
+    private boolean backgroundClearPending = false;
 
     private NativeBridge nativeBridge;
 
@@ -550,6 +553,25 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_BACKGROUND_LOCATION) {
+            backgroundLocationPermissionPending = false;
+            boolean granted = false;
+            for (int result : grantResults) {
+                if (result == PackageManager.PERMISSION_GRANTED) {
+                    granted = true;
+                    break;
+                }
+            }
+            if (granted) {
+                TrackingService.start(this, backgroundClearPending);
+                backgroundClearPending = false;
+            } else {
+                backgroundClearPending = false;
+                TrackingService.setLastError("需要位置权限才能后台记录轨迹，请在系统设置中允许");
+                Toast.makeText(this, "需要位置权限才能后台记录轨迹", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
         if (requestCode == REQ_NATIVE_LOCATION) {
             nativeLocationPermissionPending = false;
             boolean nativeGranted = false;
@@ -937,6 +959,49 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String getLocationError() {
             return getNativeLocationError();
+        }
+
+        @JavascriptInterface
+        public void startBackgroundTracking(boolean clearExisting) {
+            runOnUiThread(() -> {
+                if (!hasLocationPermission()) {
+                    backgroundClearPending = clearExisting;
+                    if (!backgroundLocationPermissionPending) {
+                        backgroundLocationPermissionPending = true;
+                        requestPermissions(
+                                new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION},
+                                REQ_BACKGROUND_LOCATION);
+                    }
+                    return;
+                }
+                TrackingService.start(MainActivity.this, clearExisting);
+            });
+        }
+
+        @JavascriptInterface
+        public void stopBackgroundTracking() {
+            runOnUiThread(() -> TrackingService.stop(MainActivity.this));
+        }
+
+        @JavascriptInterface
+        public void clearBackgroundTracking() {
+            runOnUiThread(() -> TrackingService.clear(MainActivity.this));
+        }
+
+        @JavascriptInterface
+        public String getTrackPointsSince(long since) {
+            return TrackingService.pointsSince(since);
+        }
+
+        @JavascriptInterface
+        public String getBackgroundLocationError() {
+            return TrackingService.getLastError();
+        }
+
+        @JavascriptInterface
+        public boolean isBackgroundTracking() {
+            return TrackingService.isRunning();
         }
 
         void closePending() {
