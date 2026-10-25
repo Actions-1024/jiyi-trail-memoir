@@ -2,6 +2,25 @@ import { getMedia, putMedia } from './db.js';
 
 const objectUrls = new Map();
 const mediaCache = new Map();
+const VIDEO_EXTENSION = /\.(mp4|m4v|mov|webm|mkv|3gp|avi|ts|mts|m2ts)$/i;
+
+// Android content pickers occasionally return an empty or generic MIME type
+// for a perfectly valid MP4. Fall back to the filename extension so a video is
+// never processed as a still photo.
+export function isVideoFile(file) {
+  return !!file && (
+    String(file.type || '').startsWith('video/')
+    || VIDEO_EXTENSION.test(String(file.name || ''))
+  );
+}
+
+function isVideoRecord(record) {
+  return !!record && (
+    record.type === 'video'
+    || String(record.blob?.type || '').startsWith('video/')
+    || VIDEO_EXTENSION.test(String(record.name || ''))
+  );
+}
 
 function uid(prefix = 'm') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -197,7 +216,7 @@ async function extractBrowserFrames(blob, durationHint = 0) {
 export async function processMediaFile(file, tripId) {
   if (!file) throw new Error('没有选择文件');
   if (file.size > 280 * 1024 * 1024) throw new Error('文件超过 280MB，请先压缩一下');
-  const prepared = file.type.startsWith('video/')
+  const prepared = isVideoFile(file)
     ? await prepareVideo(file)
     : await preparePhoto(file);
   const id = uid(prepared.type === 'video' ? 'v' : 'p');
@@ -281,8 +300,11 @@ export async function hydrateTrip(trip, options = {}) {
     if (moment.mediaId) {
       const media = await resolveMedia(moment.mediaId);
       if (media) {
+        // Upgrade media that was wrongly stored as a photo (empty MIME from a
+        // content picker) before the Vlog decides which card layout to use.
+        const actualType = isVideoRecord(media) ? 'video' : media.type;
         let frames = media.frames || moment.frames || [];
-        if (!frames.length && media.type === 'video' && options.extractFrames && media.blob) {
+        if (!frames.length && actualType === 'video' && options.extractFrames && media.blob) {
           frames = await extractBrowserFrames(media.blob, media.duration);
           if (!frames.length) {
             frames = await extractNativeFrames(media.blob, media.name, media.blob.type);
@@ -290,10 +312,11 @@ export async function hydrateTrip(trip, options = {}) {
         }
         return {
           ...moment,
-          type: moment.type === 'note' ? 'note' : media.type,
+          type: moment.type === 'note' ? 'note' : actualType,
+          mediaType: actualType,
           src: media.src,
           thumbUrl: media.thumbUrl,
-          videoSrc: media.type === 'video' ? media.src : null,
+          videoSrc: actualType === 'video' ? media.src : null,
           mediaWidth: media.width,
           mediaHeight: media.height,
           mediaDuration: media.duration,

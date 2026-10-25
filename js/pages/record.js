@@ -1,7 +1,7 @@
 import { TrailMap } from '../map.js';
 import { TrackRecorder, getDraft, saveDraftState, clearDraft } from '../recorder.js';
 import { saveTrip, requestPersistence } from '../db.js';
-import { processMediaFile, formatBytes } from '../media.js';
+import { processMediaFile, formatBytes, isVideoFile } from '../media.js';
 import {
   statsFor,
   totalDistance,
@@ -482,7 +482,7 @@ export async function renderRecord(root, ctx) {
 
   async function handleFile(file, container, context, close) {
     if (!file) return;
-    const allowed = file.type.startsWith('image/') || file.type.startsWith('video/');
+    const allowed = file.type.startsWith('image/') || isVideoFile(file);
     if (!allowed) {
       toast('请选择照片或视频文件', { type: 'error' });
       return;
@@ -681,7 +681,7 @@ export async function renderRecord(root, ctx) {
   }
 
   async function attachMedia(file, body, context) {
-    const allowed = file.type.startsWith('image/') || file.type.startsWith('video/');
+    const allowed = file.type.startsWith('image/') || isVideoFile(file);
     if (!allowed || file.size > 280 * 1024 * 1024) {
       toast('请选择 280MB 以内的照片或视频', { type: 'error' });
       return;
