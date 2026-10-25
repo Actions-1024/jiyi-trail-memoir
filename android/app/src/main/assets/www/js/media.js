@@ -180,7 +180,11 @@ async function extractBrowserFrames(blob, durationHint = 0) {
       canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
       frames.push(canvas.toDataURL('image/jpeg', 0.68));
     }
-    return frames;
+    const unique = new Set(frames).size;
+    const useful = frames.filter((frame) => frame.length > 1800).length;
+    // A single repeated or near-empty frame means the WebView returned the
+    // poster/black frame for every seek; prefer native extraction in that case.
+    return unique > 1 && useful >= Math.min(4, frames.length) ? frames : [];
   } catch {
     return [];
   } finally {
